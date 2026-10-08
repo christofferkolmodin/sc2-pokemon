@@ -3,31 +3,8 @@ import { KINDS } from "../sim/units.ts";
 import { TUNE_DEFS } from "../sim/tuning.ts";
 import type { Unit } from "../sim/world.ts";
 import type { Game } from "./game.ts";
-import { TYPE_COLORS, teamColor } from "./style.ts";
 import { controlsHtml } from "./controls.ts";
 import { ReplaySource } from "./sources.ts";
-
-/** Small SVG token for a unit kind, used in the selection panel. */
-export function unitIcon(kind: number, owner: number, size: number): string {
-  const k = KINDS[kind];
-  const [main, dark, light] = TYPE_COLORS[k.type];
-  const r = size / 2;
-  const extra =
-    k.name === "Squirtle"
-      ? `<circle cx="${r}" cy="${r * 1.25}" r="${r * 0.3}" fill="none" stroke="#8a5a2a" stroke-width="${r * 0.1}"/>`
-      : k.name === "Bulbasaur"
-        ? `<circle cx="${r}" cy="${r * 1.3}" r="${r * 0.3}" fill="#2f7a46"/>`
-        : k.name === "Venusaur"
-          ? `<circle cx="${r}" cy="${r * 1.3}" r="${r * 0.32}" fill="#ff7d9c"/><circle cx="${r}" cy="${r * 1.3}" r="${r * 0.1}" fill="#ffe36b"/>`
-          : `<circle cx="${r}" cy="${r * 1.72}" r="${r * 0.2}" fill="#ffcf3a"/>`;
-  const id = `g${kind}${owner}${size}`;
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-    <defs><radialGradient id="${id}" cx="35%" cy="30%"><stop offset="0" stop-color="${light}"/><stop offset=".5" stop-color="${main}"/><stop offset="1" stop-color="${dark}"/></radialGradient></defs>
-    <circle cx="${r}" cy="${r}" r="${r * 0.92}" fill="${teamColor(owner)}"/>
-    <circle cx="${r}" cy="${r}" r="${r * 0.76}" fill="url(#${id})"/>${extra}
-    <circle cx="${r * 0.8}" cy="${r * 0.62}" r="${r * 0.08}" fill="#16181c"/><circle cx="${r * 1.2}" cy="${r * 0.62}" r="${r * 0.08}" fill="#16181c"/>
-  </svg>`;
-}
 
 const COMMANDS: { key: string; hk: string; label: string; icon: string; act: (g: Game) => void; targeting?: string }[] = [
   { key: "move", hk: "M", label: "Move", icon: "➜", act: (g) => g.setTargeting("move"), targeting: "move" },
@@ -201,6 +178,7 @@ export class Hud {
       this.singleHtml = "";
     } else if (ids.length !== 1) return;
     const panel = this.$("#selpanel");
+    this.updatePortrait(ids[0]);
     if (ids.length === 0) {
       panel.innerHTML = `<div class="empty-sel">No selection</div>`;
       return;
@@ -209,11 +187,12 @@ export class Hud {
       const u = g.world.byId.get(ids[0])!;
       const k = KINDS[u.kind];
       const order = u.holding ? "Holding position" : u.orders.length ? `${["Moving", "Attack-moving", "Patrolling"][u.orders[0].mode]}${u.orders.length > 1 ? ` (+${u.orders.length - 1} queued)` : ""}` : "Idle";
+      const owner = g.names[u.owner] ?? (u.owner === 7 ? "Dummy" : `Player ${u.owner}`);
       const html = `<div class="single" data-single="${u.id}">
-        <div class="portrait">${unitIcon(u.kind, u.owner, 80)}</div>
+        <div class="big"><img src="${this.g.renderer.unitIcon(u.kind, u.owner, 72)}" alt=""></div>
         <div><h4>${k.name}</h4>
-          <div class="meta">${g.names[u.owner] ?? (u.owner === 7 ? "Dummy" : `Player ${u.owner}`)} · ${k.type}${k.air ? " · air" : ""}</div>
-          <div class="meta">Moves like an SC2 ${k.ref} · speed ${((k.speed * 22.4) / FP).toFixed(2)} · radius ${(k.radius / FP).toFixed(3)}</div>
+          <div class="meta">${owner} · <b>${k.type}</b>${k.air ? " · <b>air</b>" : ""} · supply <b>${k.supply}</b></div>
+          <div class="meta">Moves like an SC2 <span class="ref">${k.ref}</span> · speed <b>${((k.speed * 22.4) / FP).toFixed(2)}</b> · radius <b>${(k.radius / FP).toFixed(3)}</b></div>
           <div class="meta">${order}</div></div></div>`;
       if (this.singleHtml !== html) panel.innerHTML = this.singleHtml = html;
       return;
@@ -221,8 +200,19 @@ export class Hud {
     const MAX = 48;
     const units = ids.slice(0, MAX).map((id) => g.world.byId.get(id)!) as Unit[];
     panel.innerHTML =
-      `<div class="wire">${units.map((u) => `<div class="u" data-id="${u.id}" title="${KINDS[u.kind].name}">${unitIcon(u.kind, u.owner, 32)}</div>`).join("")}</div>` +
+      `<div class="wire">${units.map((u) => `<div class="u" data-id="${u.id}" title="${KINDS[u.kind].name}"><img src="${this.g.renderer.unitIcon(u.kind, u.owner, 40)}" alt=""></div>`).join("")}</div>` +
       (ids.length > MAX ? `<div class="sel-more">+${ids.length - MAX} more (${ids.length} selected)</div>` : "");
+  }
+
+  private portraitKey = "";
+
+  /** SC2 shows the first selected unit's portrait between the info panel and the command card. */
+  private updatePortrait(id: number | undefined) {
+    const u = id === undefined ? undefined : this.g.world.byId.get(id);
+    const key = u ? `${u.kind}:${u.owner}` : "";
+    if (key === this.portraitKey) return;
+    this.portraitKey = key;
+    this.$("#portrait .pframe").innerHTML = u ? `<img src="${this.g.renderer.unitIcon(u.kind, u.owner, 140)}" alt="">` : "";
   }
 
   private updateGroups() {
@@ -270,5 +260,10 @@ export class Hud {
     } else lines.push("solo lab");
     lines.push(`${g.world.units.length} units  sim ${g.simMs.toFixed(2)} ms/tick  hash ${g.world.hash().toString(16).padStart(8, "0")}`);
     this.$("#stats").innerHTML = lines.join("\n");
+    if (g.me !== -1) {
+      let used = 0;
+      for (const u of g.world.units) if (u.owner === g.me) used += KINDS[u.kind].supply;
+      this.$("#supply").textContent = `${used}/200`;
+    } else this.$("#resources").hidden = true;
   }
 }

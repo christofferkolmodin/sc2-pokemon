@@ -12,10 +12,10 @@ A browser RTS that plays like StarCraft 2, with starter Pokémon instead of SC2 
 ## The goal, in priority order
 1. **Feel like SC2.** Instant command feedback, SC2 group movement (balls, pushing, magic box), control groups, shift-queue, attack-move, hotkeys, 22.4 Hz pacing.
 2. **Play with friends** over a private network, with replays.
-3. **Look decent.** SC2-level art is out of reach for a hobby project; a clean, readable indie look is the target. Art can be swapped later because rendering is separate from game logic.
+3. **Look like SC2.** 3D units, SC2's tilted camera, cliffs, shadows and the SC2 console layout. The models are placeholders built from simple shapes; real models can replace them later because rendering is separate from game logic.
 
 ## Quick start
-Requires Node.js 20.11 or newer.
+Requires Node.js 20.11 or newer and a browser with WebGL2 (any current Chrome, Edge, Firefox or Safari).
 
 ```bash
 npm install
@@ -34,7 +34,8 @@ Other commands: `npm run dev` (rebuild client and restart server on change), `np
 
 ```
 src/sim/      Deterministic simulation. Pure TypeScript, integers only, no DOM.
-src/client/   Browser: input, camera, Canvas renderer, HUD, minimap, replays.
+src/client/   Browser: input, SC2 camera, WebGL2 3D renderer, HUD, minimap, replays.
+src/client/gl/  Renderer internals: math, terrain mesh, primitive meshes, unit models.
 src/server/   Node relay: rooms, 22.4 Hz turn clock, desync detection, static files.
 src/net/      Message types shared by client and server.
 test/         node:test suites (determinism, movement behaviour, purity rules).
@@ -78,12 +79,19 @@ Each Pokémon borrows the movement stats of an SC2 unit, so it can be compared s
 | Venusaur | Thor | huge, slow, needs wide gaps |
 | Charizard | Mutalisk | air, gliding acceleration |
 
-Units are drawn as stylised tokens (type colour, team-colour rim, eyes for facing, a shell, bulb, flower, flame or wings). Ripped sprites can replace them later; keep any such assets in `assets-private/` (git-ignored).
+Units are low-poly 3D Pokémon assembled from spheres, cones and cylinders (`src/client/gl/models.ts`), with a team-coloured scarf, a walk bob, flickering tail flames and flapping wings. Ripped models can replace them later; keep any such assets in `assets-private/` (git-ignored).
 
 ## Decisions (and what changed from the first draft)
-- **Renderer: Canvas 2D for now, behind a small interface** (`src/client/render.ts`: `draw()` + `pick()`). It handles hundreds of tokens at 60+ fps. Switch to PixiJS (WebGL) when sprite animation and effects arrive, and to Three.js if we ever go 3D. Phaser is ruled out: its own game loop and physics fight a separate deterministic sim.
+- **Renderer: our own small WebGL2 3D renderer** (`src/client/render.ts`, no dependencies). It has:
+  - SC2's camera: distance 34, pitch 56°, about a 31° field of view, panning only.
+  - A heightfield terrain. Blocked tiles rise into rocky cliffs that start exactly at the tile edge, so what you see matches collision.
+  - Sun lighting with a shadow map.
+  - Instanced unit models, so hundreds of units cost about five draw calls.
+  - Ground-decal selection circles.
+  - Unit portraits rendered from the models.
+- **Three.js later.** Switch to three.js when we import real animated (skinned glTF) models; the renderer only exposes `draw`, `pick`, `pickBox`, `onScreen` and `unitIcon`, so the swap is contained. Phaser is ruled out: its own game loop and physics fight a separate deterministic sim.
 - **Multiplayer was moved forward**, from roadmap step 4 to step 2. Retrofitting determinism into a working single-player game is painful, so the architecture is lockstep from day one.
-- **2D top-down** for v1. Isometric adds art and sorting work without teaching anything about feel.
+- **3D with SC2's camera** from the start (changed from the earlier "2D first" plan, because the look matters as much as the feel). Game logic is still 2D: the sim has no heights, and cliffs are just blocked tiles drawn tall.
 - **1v1 first** (up to 4 players already works, which is useful for testing).
 - **Tooling kept minimal:** TypeScript, esbuild, `ws`, `tsx`. No framework.
 
@@ -93,7 +101,7 @@ Units are drawn as stylised tokens (type colour, team-colour rim, eyes for facin
 3. **Combat:** HP, armor, attacks, attack-move target acquisition, death, health bars. Also unit turn rates, which matter once units shoot.
 4. **Economy:** workers, mineral trips and saturation, buildings that train units, supply.
 5. **Vertical slice:** one faction mirror (for example Fire vs Fire), ~5 units, 1v1. Play it with friends until it's fun.
-6. **More factions and content,** then fog of war, AI opponent, better art (PixiJS sprites), always-on hosting.
+6. **More factions and content,** then fog of war, AI opponent, real 3D models (three.js + glTF), high ground with vision rules, always-on hosting.
 
 **Next feel work:** compare against SC2 footage (marines through a ramp, a zergling surround, a muta stack) and tune. Known gaps: no turn rate yet, and no "idle units walk back after being pushed" behaviour.
 

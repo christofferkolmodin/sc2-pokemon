@@ -46,6 +46,7 @@
   <!-- =============================== Game =============================== -->
   <div id="game" hidden>
     <canvas id="view"></canvas>
+    <canvas id="overlay"></canvas>
 
     <div id="topbar">
       <div class="left">
@@ -62,13 +63,16 @@
           <button data-ui data-speed="8">8×</button>
         </span>
       </div>
-      <div class="right" id="stats"></div>
+      <div class="right">
+        <div id="resources" class="frame"><span class="res" title="Supply used / cap"><i class="ico supply"></i><span id="supply">0/200</span></span></div>
+        <div id="stats"></div>
+      </div>
     </div>
 
     <div id="banner" hidden></div>
     <div id="toast"></div>
 
-    <aside id="tuning" hidden>
+    <aside id="tuning" class="frame" hidden>
       <h3>Movement tuning <small>changes apply to everyone in the game</small></h3>
       <div id="tune-list"></div>
       <h3>Spawn at camera centre</h3>
@@ -76,18 +80,19 @@
       <p class="hint">Tip: record a short SC2 clip of the same scenario and tune until they look alike side by side.</p>
     </aside>
 
-    <aside id="help" hidden>
+    <aside id="help" class="frame" hidden>
       <h3>Controls</h3>
       <div id="help-list"></div>
     </aside>
 
     <div id="console">
-      <div id="mm-wrap" data-minimap><canvas id="minimap" data-minimap></canvas></div>
-      <div id="center">
+      <div id="mm-wrap" class="frame" data-minimap><canvas id="minimap" data-minimap></canvas></div>
+      <div id="center" class="frame">
         <div id="groups"></div>
         <div id="selpanel"></div>
       </div>
-      <div id="cmdcard"></div>
+      <div id="portrait" class="frame"><div class="pframe"></div><div class="scan"></div></div>
+      <div id="cmdcard" class="frame"></div>
     </div>
   </div>
 

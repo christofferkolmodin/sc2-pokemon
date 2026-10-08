@@ -64,10 +64,13 @@ export class Minimap {
       const r = Math.max(1.5, (u.radius / FP) * s);
       ctx.fillRect((u.x / FP) * s - r, (u.y / FP) * s - r, r * 2, r * 2);
     }
-    // Camera frustum. The bottom part hidden by the console still counts as on-screen in SC2.
-    const v = this.cam.view();
+    // Camera frustum: a trapezoid, like SC2, because the camera is tilted.
+    const fp = this.cam.footprint();
     ctx.strokeStyle = "rgba(255,255,255,0.9)";
     ctx.lineWidth = 1;
-    ctx.strokeRect(v.x0 * s + 0.5, v.y0 * s + 0.5, (v.x1 - v.x0) * s, (v.y1 - v.y0) * s);
+    ctx.beginPath();
+    fp.forEach((p, i) => (i ? ctx.lineTo(p.x * s, p.y * s) : ctx.moveTo(p.x * s, p.y * s)));
+    ctx.closePath();
+    ctx.stroke();
   }
 }

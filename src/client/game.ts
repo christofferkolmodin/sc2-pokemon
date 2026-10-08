@@ -37,6 +37,7 @@ export class Game {
   speed = 1;
   alpha = 0;
   fps = 0;
+  private frameMs = 16;
   simMs = 0;
   desynced = false;
   replayStatus = "";
@@ -64,7 +65,7 @@ export class Game {
     this.world = new World(options);
     this.recorder = new ReplayRecorder(options, names);
     this.cam = new Camera(this.world.map.w, this.world.map.h);
-    this.renderer = new Renderer(root.querySelector("#view")!, this.world, this.cam);
+    this.renderer = new Renderer(root.querySelector("#view")!, root.querySelector("#overlay")!, this.world, this.cam);
     this.minimap = new Minimap(root.querySelector("#minimap")!, this.world, this.cam);
     this.selection = new Selection(this.world, me);
     this.pointer = new Pointer(root, root.querySelector("#minimap")!);
@@ -148,11 +149,16 @@ export class Game {
     }
   }
 
-  private frame = (now: number) => {
+  private frame = () => {
     if (!this.running) return;
-    const dt = Math.min(250, now - this.last);
+    // performance.now() rather than the rAF timestamp: some browsers hand out
+    // vsync-aligned timestamps that drift from wall time when frames are slow.
+    const now = performance.now();
+    const raw = now - this.last;
+    const dt = Math.min(250, raw);
     this.last = now;
-    this.fps = this.fps * 0.9 + (1000 / Math.max(1, dt)) * 0.1;
+    this.frameMs = this.frameMs * 0.9 + raw * 0.1;
+    this.fps = 1000 / Math.max(1, this.frameMs);
 
     this.acc += dt * this.speed;
     let steps = 0;
