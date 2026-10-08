@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FP, MODE_MOVE, type World, isBlockedTile } from "../src/sim/index.ts";
+import { FP, K_CHARIZARD, K_CHARMANDER, K_SQUIRTLE, MODE_MOVE, type World, isBlockedTile } from "../src/sim/index.ts";
 import { T, ownIds, run, tileOf } from "./helpers.ts";
 
 const solo = { seed: 7, map: "lab", players: [1] };
@@ -39,7 +39,7 @@ test("whole army leaves the main through the ramp and reaches the far side", () 
 test("units converge into a compact ball when clicked inside the group", () => {
   let ids: number[] = [];
   const { world } = run(solo, 22 * 15, (w, t) => {
-    if (t === 1) ids = ownIds(w, 1, 1); // 16 Charmander
+    if (t === 1) ids = ownIds(w, 1, K_CHARMANDER); // 16 Charmander
     if (t === 1) return [{ p: 1, c: { t: "move", ids, x: T(14), y: T(12), q: false, mode: MODE_MOVE } }];
     return [];
   });
@@ -55,7 +55,7 @@ test("magic box keeps formation when clicking far outside the group", () => {
   let before: Map<number, { x: number; y: number }> = new Map();
   const { world } = run({ seed: 7, map: "lab", players: [1] }, 22 * 25, (w, t) => {
     if (t === 1) {
-      ids = ownIds(w, 1, 4); // air: no terrain in the way
+      ids = ownIds(w, 1, K_CHARIZARD); // air: no terrain in the way
       const c = centroid(w, ids);
       before = new Map(ids.map((id) => [id, { x: w.byId.get(id)!.x / FP - c.x, y: w.byId.get(id)!.y / FP - c.y }]));
       return [{ p: 1, c: { t: "move", ids, x: T(60), y: T(50), q: false, mode: MODE_MOVE } }];
@@ -77,8 +77,8 @@ test("moving units push idle friendly units out of the way", () => {
   let start = new Map<number, { x: number; y: number }>();
   const { world } = run(solo, 22 * 20, (w, t) => {
     if (t === 1) {
-      movers = ownIds(w, 1, 1);
-      blockers = ownIds(w, 1, 0);
+      movers = ownIds(w, 1, K_CHARMANDER);
+      blockers = ownIds(w, 1, K_SQUIRTLE);
       start = new Map(blockers.map((id) => [id, { x: w.byId.get(id)!.x, y: w.byId.get(id)!.y }]));
       const b = centroid(w, blockers);
       const m = centroid(w, movers);
@@ -105,8 +105,8 @@ test("hold position units are not pushed", () => {
   let start = new Map<number, { x: number; y: number }>();
   run(solo, 22 * 20, (w, t) => {
     if (t === 1) {
-      movers = ownIds(w, 1, 1);
-      holders = ownIds(w, 1, 0);
+      movers = ownIds(w, 1, K_CHARMANDER);
+      holders = ownIds(w, 1, K_SQUIRTLE);
       start = new Map(holders.map((id) => [id, { x: w.byId.get(id)!.x, y: w.byId.get(id)!.y }]));
       const b = centroid(w, holders);
       return [
@@ -136,7 +136,7 @@ test("shift-queued waypoints are visited in order", () => {
   ];
   run(solo, 22 * 20, (w, t) => {
     if (t === 1) {
-      id = ownIds(w, 1, 1)[0];
+      id = ownIds(w, 1, K_CHARMANDER)[0];
       return pts.map(([x, y], i) => ({ p: 1, c: { t: "move" as const, ids: [id], x: T(x), y: T(y), q: i > 0, mode: MODE_MOVE } }));
     }
     return [];

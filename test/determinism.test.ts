@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MODE_ATTACK, MODE_MOVE, MODE_PATROL, type PlayerCommand, type WorldOptions, isqrt, verifyReplay } from "../src/sim/index.ts";
+import { K_BULBASAUR, K_CHARIZARD, K_CHARMANDER, K_SQUIRTLE, MODE_ATTACK, MODE_MOVE, MODE_PATROL, type PlayerCommand, type WorldOptions, isqrt, verifyReplay } from "../src/sim/index.ts";
 import { T, ownIds, run } from "./helpers.ts";
 
 const opts: WorldOptions = { seed: 1234, map: "lab", players: [1, 2], dummyOpponent: true };
@@ -10,11 +10,11 @@ function script(w: import("../src/sim/index.ts").World, t: number): PlayerComman
   const out: PlayerCommand[] = [];
   if (t === 5) out.push({ p: 1, c: { t: "move", ids: ownIds(w, 1), x: T(80), y: T(40), q: false, mode: MODE_MOVE } });
   if (t === 8) out.push({ p: 2, c: { t: "move", ids: ownIds(w, 2), x: T(15), y: T(30), q: false, mode: MODE_ATTACK } });
-  if (t === 200) out.push({ p: 1, c: { t: "move", ids: ownIds(w, 1, 1), x: T(44.5), y: T(5), q: true, mode: MODE_MOVE } });
-  if (t === 220) out.push({ p: 2, c: { t: "spawn", kind: 0, x: T(48), y: T(60), n: 20 } });
+  if (t === 200) out.push({ p: 1, c: { t: "move", ids: ownIds(w, 1, K_CHARMANDER), x: T(44.5), y: T(5), q: true, mode: MODE_MOVE } });
+  if (t === 220) out.push({ p: 2, c: { t: "spawn", kind: K_SQUIRTLE, x: T(48), y: T(60), n: 20 } });
   if (t === 300) out.push({ p: 1, c: { t: "tune", key: "accelPct", value: 40 } });
-  if (t === 320) out.push({ p: 2, c: { t: "move", ids: ownIds(w, 2, 4), x: T(10), y: T(10), q: false, mode: MODE_PATROL } });
-  if (t === 400) out.push({ p: 1, c: { t: "hold", ids: ownIds(w, 1, 2) } });
+  if (t === 320) out.push({ p: 2, c: { t: "move", ids: ownIds(w, 2, K_CHARIZARD), x: T(10), y: T(10), q: false, mode: MODE_PATROL } });
+  if (t === 400) out.push({ p: 1, c: { t: "hold", ids: ownIds(w, 1, K_BULBASAUR) } });
   if (t === 500) out.push({ p: 2, c: { t: "move", ids: ownIds(w, 2), x: T(47.5), y: T(35.5), q: false, mode: MODE_MOVE } });
   // Commands for units the player doesn't own must be ignored.
   if (t === 510) out.push({ p: 1, c: { t: "stop", ids: ownIds(w, 2) } });

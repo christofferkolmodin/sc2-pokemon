@@ -3,43 +3,158 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SC2 Pokémon</title>
+  <title>PokéCraft</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="lobby.css">
 </head>
 <body>
   <!-- ============================== Lobby ============================== -->
   <main id="lobby">
-    <div class="lobby-card">
-      <h1>SC2 <span>Pokémon</span></h1>
-      <p class="tag">Private build · friends only · movement lab</p>
+    <div class="lb">
+      <header class="lb-head">
+        <h1>Poké<span>Craft</span></h1>
+        <p>StarCraft-style strategy with starter Pokémon. Mine, build, evolve your army and beat your opponents.</p>
+      </header>
 
       <div id="lobby-form">
-        <label>Trainer name <input id="name" maxlength="16" autocomplete="off"></label>
-        <label>Room <input id="room" maxlength="16" value="lobby" autocomplete="off"></label>
-        <div class="row">
-          <button id="btn-join" class="primary">Join room</button>
-          <button id="btn-solo">Solo feel lab</button>
-        </div>
-        <div class="row">
-          <label class="file">Watch replay…<input id="replay-file" type="file" accept=".json,application/json"></label>
-        </div>
+        <!-- Step 1 -->
+        <section class="lb-step">
+          <h2><b>1</b> Your trainer name</h2>
+          <input id="name" maxlength="16" autocomplete="off" placeholder="Trainer" aria-label="Trainer name">
+          <p class="lb-help">Shown to the other players in a game.</p>
+        </section>
+
+        <!-- Step 2 -->
+        <section class="lb-step">
+          <h2><b>2</b> Pick your faction</h2>
+          <p class="lb-help">Everyone builds the same bases with Pikachu workers. Your faction decides your army: you train the first Pokémon and evolve it into stronger ones.</p>
+          <div id="factions" class="lb-factions">
+            <button class="lb-faction fire" data-f="0">
+              <span class="lb-fname">🔥 Fire</span>
+              <span class="lb-line" data-line="charmander,charmeleon,charizard"></span>
+              <span class="lb-fdesc">Fast, cheap swarm that ends as a <b>flying</b> Charizard.</span>
+            </button>
+            <button class="lb-faction water" data-f="1">
+              <span class="lb-fname">💧 Water</span>
+              <span class="lb-line" data-line="squirtle,wartortle,blastoise"></span>
+              <span class="lb-fdesc">Ranged shooters that hit air, ending in long-range Blastoise artillery.</span>
+            </button>
+            <button class="lb-faction grass" data-f="2">
+              <span class="lb-fname">🌿 Grass</span>
+              <span class="lb-line" data-line="bulbasaur,ivysaur,venusaur"></span>
+              <span class="lb-fdesc">Tough and slow, ending in a huge Venusaur with Solar Beam.</span>
+            </button>
+            <button class="lb-faction random" data-f="-1">
+              <span class="lb-fname">🎲 Random</span>
+              <span class="lb-fdesc">Surprise me each game.</span>
+            </button>
+          </div>
+          <p class="lb-help">Type matchups: 🔥 beats 🌿, 🌿 beats 💧, 💧 beats 🔥.</p>
+        </section>
+
+        <!-- Step 3 -->
+        <section class="lb-step">
+          <h2><b>3</b> How do you want to play?</h2>
+          <div id="modes" class="lb-modes" role="tablist">
+            <button class="lb-mode" data-mode="ai" role="tab"><i>🤖</i><b>vs Computer</b><span>A full match against AI opponents.</span></button>
+            <button class="lb-mode" data-mode="friends" role="tab"><i>👥</i><b>With friends</b><span>Meet in a room online and play together.</span></button>
+            <button class="lb-mode" data-mode="lab" role="tab"><i>🧪</i><b>Practice lab</b><span>Sandbox: free resources, spawn any Pokémon.</span></button>
+            <button class="lb-mode" data-mode="replay" role="tab"><i>🎬</i><b>Watch a replay</b><span>Open a game you saved.</span></button>
+          </div>
+
+          <div class="lb-panel" data-panel="ai">
+            <div class="lb-cols">
+              <div>
+                <span class="lb-label">Map</span>
+                <div class="lb-maps" data-picker="solo"></div>
+              </div>
+              <div>
+                <label class="lb-label" for="ai-count">Opponents</label>
+                <select id="ai-count"><option value="1">1 opponent (1v1)</option><option value="2">2 opponents (free-for-all)</option><option value="3">3 opponents (free-for-all)</option></select>
+                <p class="lb-help" id="ai-count-help"></p>
+                <span class="lb-label">Difficulty</span>
+                <div id="ai-diff" class="lb-seg">
+                  <button data-d="easy"><b>Easy</b><span>Slow builds, small attacks. Good for learning.</span></button>
+                  <button data-d="medium"><b>Medium</b><span>Expands, evolves and attacks in waves.</span></button>
+                  <button data-d="hard"><b>Hard</b><span>Fast economy, upgrades, big armies.</span></button>
+                </div>
+              </div>
+            </div>
+            <button id="btn-ai" class="primary lb-go">Start match</button>
+          </div>
+
+          <div class="lb-panel" data-panel="friends">
+            <label class="lb-label" for="room">Room name</label>
+            <div class="lb-inline">
+              <input id="room" maxlength="16" autocomplete="off" placeholder="e.g. friday">
+              <button id="btn-join" class="primary">Join room</button>
+            </div>
+            <p class="lb-help">Everyone who types the <b>same room name</b> ends up in the same lobby. The first one in is the host: they pick the map, can add computer players, and press Start. Once you're in, you can also just send friends the invite link.</p>
+          </div>
+
+          <div class="lb-panel" data-panel="lab">
+            <p class="lb-help">You start with a ready-made army of every Pokémon, unlimited resources and an idle enemy army to test against. Press <kbd>F9</kbd> in game to spawn more units or change how movement feels.</p>
+            <button id="btn-solo" class="primary lb-go">Open practice lab</button>
+          </div>
+
+          <div class="lb-panel" data-panel="replay">
+            <label class="lb-drop" id="replay-drop">
+              <input id="replay-file" type="file" accept=".json,application/json">
+              <b>Choose a replay file</b>
+              <span>or drop it here. Save replays from the in-game menu or the end-of-game screen.</span>
+            </label>
+          </div>
+        </section>
       </div>
 
-      <div id="room-view" hidden>
-        <h2>Room <span id="room-code"></span></h2>
-        <ul id="room-players"></ul>
-        <p class="hint" id="room-hint"></p>
-        <div class="row">
-          <button id="btn-start" class="primary">Start game</button>
-          <button id="btn-leave">Leave</button>
+      <!-- Multiplayer room -->
+      <div id="room-view" class="lb-room" hidden>
+        <div class="lb-room-head">
+          <h2>Room <span id="room-code"></span></h2>
+          <button id="btn-leave">Leave room</button>
         </div>
+        <div class="lb-invite">
+          <span>Invite link</span>
+          <code id="room-link"></code>
+          <button id="btn-copy">Copy</button>
+        </div>
+        <div class="lb-cols">
+          <div>
+            <span class="lb-label">Players</span>
+            <ul id="room-players"></ul>
+            <div id="room-host" hidden>
+              <span class="lb-label">Add a computer player</span>
+              <div class="lb-inline">
+                <select id="room-ai-diff"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select>
+                <button id="btn-add-ai">+ Add computer</button>
+              </div>
+            </div>
+            <span class="lb-label">Your faction</span>
+            <div id="room-factions" class="lb-seg small">
+              <button data-f="0">🔥 Fire</button>
+              <button data-f="1">💧 Water</button>
+              <button data-f="2">🌿 Grass</button>
+            </div>
+          </div>
+          <div>
+            <span class="lb-label">Map <small id="room-map-who"></small></span>
+            <div class="lb-maps" data-picker="room"></div>
+          </div>
+        </div>
+        <p class="lb-help" id="room-hint"></p>
+        <button id="btn-start" class="primary lb-go">Start game</button>
       </div>
 
-      <p id="lobby-error" class="error"></p>
-      <details class="controls">
-        <summary>Controls (SC2 standard)</summary>
-        <div id="controls-list"></div>
-      </details>
+      <p id="lobby-error" class="lb-error" role="alert"></p>
+      <div id="loading" class="lb-loading" hidden><div class="spinner"></div><span id="loading-text">Loading…</span></div>
+
+      <footer class="lb-foot">
+        <details class="controls">
+          <summary>Controls (SC2 standard hotkeys)</summary>
+          <div id="controls-list"></div>
+        </details>
+        <a href="viewer.html" target="_blank">See all the Pokémon models</a>
+      </footer>
     </div>
   </main>
 
@@ -50,27 +165,49 @@
 
     <div id="topbar">
       <div class="left">
-        <button data-ui id="btn-menu-full" title="Fullscreen + lock cursor and keys (recommended)">⛶ Fullscreen</button>
-        <button data-ui id="btn-tuning" title="Movement tuning (F10)">Tuning <kbd>F10</kbd></button>
-        <button data-ui id="btn-replay" title="Download a replay of this game">Save replay</button>
+        <button data-ui id="btn-menu" title="Menu (F10)">Menu</button>
+        <button data-ui id="btn-menu-full" title="Fullscreen + lock cursor and keys (recommended)">⛶</button>
+        <button data-ui id="btn-tuning" title="Movement tuning and spawning (F9)">Lab <kbd>F9</kbd></button>
         <button data-ui id="btn-help" title="Controls">?</button>
-        <button data-ui id="btn-quit">Leave</button>
         <span id="replay-controls" hidden>
           <button data-ui data-speed="0">❚❚</button>
           <button data-ui data-speed="1">1×</button>
           <button data-ui data-speed="2">2×</button>
           <button data-ui data-speed="4">4×</button>
           <button data-ui data-speed="8">8×</button>
+          <button data-ui id="btn-fog">Fog: off</button>
         </span>
       </div>
       <div class="right">
-        <div id="resources" class="frame"><span class="res" title="Supply used / cap"><i class="ico supply"></i><span id="supply">0/200</span></span></div>
+        <div id="resources" class="frame">
+          <span class="res" title="Minerals"><i class="ico min"></i><span id="res-min">0</span></span>
+          <span class="res" title="Vespene gas"><i class="ico gas"></i><span id="res-gas">0</span></span>
+          <span class="res" title="Supply used / provided"><i class="ico sup"></i><span id="res-sup">0/0</span></span>
+          <span class="res" title="Workers"><i class="ico wrk"></i><span id="res-wrk">0</span></span>
+        </div>
         <div id="stats"></div>
       </div>
     </div>
 
     <div id="banner" hidden></div>
     <div id="toast"></div>
+    <div id="errmsg"></div>
+    <div id="chat-log"></div>
+    <input id="chat-input" maxlength="200" placeholder="Say something… (Enter to send)" hidden autocomplete="off">
+    <div id="tooltip" hidden></div>
+
+    <aside id="menu" class="frame" hidden>
+      <h3>Menu</h3>
+      <label class="opt">Graphics <select id="opt-quality"><option value="high">High</option><option value="low">Low (faster)</option></select></label>
+      <label class="opt">Health bars <select id="opt-bars"><option value="damaged">Damaged &amp; selected</option><option value="always">Always</option></select></label>
+      <label class="opt">Volume <input id="opt-volume" type="range" min="0" max="100" step="5"></label>
+      <label class="opt"><input id="opt-voice" type="checkbox"> Advisor voice ("Not enough minerals")</label>
+      <div class="row">
+        <button data-ui id="btn-replay">Save replay</button>
+        <button data-ui id="btn-surrender">Surrender</button>
+        <button data-ui id="btn-quit">Leave game</button>
+      </div>
+    </aside>
 
     <aside id="tuning" class="frame" hidden>
       <h3>Movement tuning <small>changes apply to everyone in the game</small></h3>
@@ -85,13 +222,28 @@
       <div id="help-list"></div>
     </aside>
 
+    <div id="gameover" hidden>
+      <div class="box frame">
+        <h2 id="over-title"></h2>
+        <div id="over-stats"></div>
+        <div class="row">
+          <button data-ui id="btn-over-replay">Save replay</button>
+          <button data-ui id="btn-over-stay">Keep watching</button>
+          <button data-ui id="btn-over-leave" class="primary">Leave</button>
+        </div>
+      </div>
+    </div>
+
     <div id="console">
-      <div id="mm-wrap" class="frame" data-minimap><canvas id="minimap" data-minimap></canvas></div>
+      <div id="mm-wrap" class="frame" data-minimap>
+        <button data-ui id="btn-idle" title="Idle workers (F1, Ctrl+F1 selects all)" hidden><i class="ico wrk"></i><b>0</b></button>
+        <canvas id="minimap" data-minimap></canvas>
+      </div>
       <div id="center" class="frame">
         <div id="groups"></div>
         <div id="selpanel"></div>
       </div>
-      <div id="portrait" class="frame"><div class="pframe"></div><div class="scan"></div></div>
+      <div id="portrait" class="frame"><div class="pframe"><canvas></canvas></div><div class="scan"></div></div>
       <div id="cmdcard" class="frame"></div>
     </div>
   </div>

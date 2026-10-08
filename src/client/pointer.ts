@@ -50,6 +50,7 @@ export class Pointer {
     document.addEventListener("pointerlockchange", () => {
       this.locked = document.pointerLockElement === this.root;
       this.root.classList.toggle("locked", this.locked);
+      this.updateHover();
       this.onLockChange(this.locked);
     });
     // Middle-click autoscroll would fight drag-panning.
@@ -83,12 +84,34 @@ export class Pointer {
     };
   }
 
+  /** Element under the virtual cursor while locked (browsers send no hover events then). */
+  private hoverEl: Element | null = null;
+
+  /** Fake hover for the locked cursor: a `.hover` class for styling plus mouseover/mouseout for tooltips. */
+  private updateHover() {
+    const el = this.locked ? document.elementFromPoint(this.x, this.y) : null;
+    if (el === this.hoverEl) return;
+    const prev = this.hoverEl;
+    this.hoverEl = el;
+    for (const n of document.querySelectorAll(".hover")) n.classList.remove("hover");
+    if (prev) prev.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: el }));
+    if (el) {
+      el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: prev }));
+      let n: Element | null = el;
+      while (n && n !== this.root) {
+        if (n.matches("button, label, .u, .slot, .grp, [data-ui]")) n.classList.add("hover");
+        n = n.parentElement;
+      }
+    }
+  }
+
   private move(e: MouseEvent) {
     if (this.root.hidden) return;
     this.inside = true;
     if (this.locked) {
       this.x = Math.max(0, Math.min(window.innerWidth - 1, this.x + e.movementX));
       this.y = Math.max(0, Math.min(window.innerHeight - 1, this.y + e.movementY));
+      this.updateHover();
     } else {
       this.x = e.clientX;
       this.y = e.clientY;

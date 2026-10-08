@@ -14,11 +14,15 @@ const copyStatic = () => cpSync(join(root, "public"), out, { recursive: true });
 copyStatic();
 
 const options = {
-  entryPoints: [join(root, "src", "client", "main.ts")],
+  entryPoints: {
+    main: join(root, "src", "client", "main.ts"),
+    viewer: join(root, "src", "client", "viewer.ts"),
+  },
   bundle: true,
   format: "esm",
   target: "es2022",
-  outfile: join(out, "main.js"),
+  outdir: out,
+  minify: process.argv.includes("--minify"),
   sourcemap: true,
   logLevel: "info",
   plugins: [{ name: "static", setup: (b) => b.onEnd(copyStatic) }],

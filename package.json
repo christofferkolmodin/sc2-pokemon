@@ -12,14 +12,17 @@
     "dev": "node tools/dev.mjs",
     "start": "node tools/build.mjs && tsx src/server/main.ts",
     "test": "tsx --test test/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "import-maps": "python tools/import-sc2maps.py"
   },
   "dependencies": {
+    "three": "^0.170.0",
     "tsx": "^4.20.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/three": "^0.170.0",
     "@types/ws": "^8.5.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.8.0"

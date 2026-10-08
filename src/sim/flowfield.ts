@@ -18,6 +18,8 @@ export class FlowField {
   readonly req: number;
   readonly dist: Int32Array;
   refs = 0;
+  /** The map changed since this was computed (rebuilt a few per tick to avoid hitches). */
+  dirty = false;
 
   constructor(map: GameMap, goalTile: number, req: number, key: number) {
     this.key = key;
@@ -26,54 +28,32 @@ export class FlowField {
     this.dist = new Int32Array(map.w * map.h).fill(UNREACHABLE);
     compute(map, this.dist, goalTile, req);
   }
+
+  /** Rebuild after the map's blocked grid changed (a structure was placed or destroyed). */
+  recompute(map: GameMap) {
+    this.dist.fill(UNREACHABLE);
+    compute(map, this.dist, this.goalTile, this.req);
+    this.dirty = false;
+  }
 }
 
-// Binary min-heap keyed by (dist, index): ties broken by index for determinism.
-class Heap {
-  d: number[] = [];
-  i: number[] = [];
-  get size() {
-    return this.d.length;
+// Bucket queue (Dial's algorithm). Edge costs are small integers (at most
+// COST_DIAG + COST_NEAR_WALL), so a ring of buckets replaces the heap. Shortest
+// distances are unique, so the result doesn't depend on the processing order
+// and stays deterministic.
+const NB = 32; // must exceed the largest edge cost
+const buckets: Int32Array[] = [];
+const bucketLen = new Int32Array(NB);
+for (let i = 0; i < NB; i++) buckets.push(new Int32Array(1024));
+
+function push(b: number, v: number) {
+  let arr = buckets[b];
+  if (bucketLen[b] === arr.length) {
+    const grown = new Int32Array(arr.length * 2);
+    grown.set(arr);
+    buckets[b] = arr = grown;
   }
-  push(dist: number, idx: number) {
-    const d = this.d;
-    const ix = this.i;
-    d.push(dist);
-    ix.push(idx);
-    let c = d.length - 1;
-    while (c > 0) {
-      const p = (c - 1) >> 1;
-      if (d[p] < d[c] || (d[p] === d[c] && ix[p] < ix[c])) break;
-      [d[p], d[c]] = [d[c], d[p]];
-      [ix[p], ix[c]] = [ix[c], ix[p]];
-      c = p;
-    }
-  }
-  pop(): [number, number] {
-    const d = this.d;
-    const ix = this.i;
-    const top: [number, number] = [d[0], ix[0]];
-    const ld = d.pop()!;
-    const li = ix.pop()!;
-    if (d.length > 0) {
-      d[0] = ld;
-      ix[0] = li;
-      let p = 0;
-      const n = d.length;
-      for (;;) {
-        const l = p * 2 + 1;
-        const r = l + 1;
-        let m = p;
-        if (l < n && (d[l] < d[m] || (d[l] === d[m] && ix[l] < ix[m]))) m = l;
-        if (r < n && (d[r] < d[m] || (d[r] === d[m] && ix[r] < ix[m]))) m = r;
-        if (m === p) break;
-        [d[p], d[m]] = [d[m], d[p]];
-        [ix[p], ix[m]] = [ix[m], ix[p]];
-        p = m;
-      }
-    }
-    return top;
-  }
+  arr[bucketLen[b]++] = v;
 }
 
 const DX = [1, -1, 0, 0, 1, 1, -1, -1];
@@ -81,25 +61,35 @@ const DY = [0, 0, 1, -1, 1, -1, 1, -1];
 
 function compute(map: GameMap, dist: Int32Array, goal: number, req: number) {
   const w = map.w;
-  const heap = new Heap();
+  const h = map.h;
+  const blocked = map.blocked;
+  const clear = map.clearance;
+  const near = map.nearWall;
+  const ok = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && blocked[y * w + x] === 0 && clear[y * w + x] >= req;
+  bucketLen.fill(0);
   dist[goal] = 0;
-  heap.push(0, goal);
-  while (heap.size > 0) {
-    const [d, idx] = heap.pop();
-    if (d !== dist[idx]) continue;
-    const x = idx % w;
-    const y = idx - x;
-    const ty = idiv(y, w);
-    for (let k = 0; k < 8; k++) {
-      const nx = x + DX[k];
-      const ny = ty + DY[k];
-      if (!isPassable(map, nx, ny, req)) continue;
-      if (k >= 4 && (!isPassable(map, x + DX[k], ty, req) || !isPassable(map, x, ty + DY[k], req))) continue; // no corner cutting
-      const n = ny * w + nx;
-      const nd = d + (k < 4 ? COST_ORTHO : COST_DIAG) + (map.nearWall[n] ? COST_NEAR_WALL : 0);
-      if (nd < dist[n]) {
-        dist[n] = nd;
-        heap.push(nd, n);
+  push(0, goal);
+  let pending = 1;
+  for (let cur = 0; pending > 0; cur++) {
+    const b = cur % NB;
+    while (bucketLen[b] > 0) {
+      const idx = buckets[b][--bucketLen[b]];
+      pending--;
+      if (dist[idx] !== cur) continue;
+      const x = idx % w;
+      const y = idiv(idx - x, w);
+      for (let k = 0; k < 8; k++) {
+        const nx = x + DX[k];
+        const ny = y + DY[k];
+        if (!ok(nx, ny)) continue;
+        if (k >= 4 && (!ok(x + DX[k], y) || !ok(x, y + DY[k]))) continue; // no corner cutting
+        const n = ny * w + nx;
+        const nd = cur + (k < 4 ? COST_ORTHO : COST_DIAG) + (near[n] ? COST_NEAR_WALL : 0);
+        if (nd < dist[n]) {
+          dist[n] = nd;
+          push(nd % NB, n);
+          pending++;
+        }
       }
     }
   }

@@ -15,6 +15,8 @@ export interface TurnSource {
   buffered(): number;
   /** Issue a command as the local player. */
   send(c: Command): void;
+  /** Issue a command for a computer player this machine runs. */
+  sendAs(p: number, c: Command): void;
   close(): void;
 }
 
@@ -33,6 +35,9 @@ export class SoloSource implements TurnSource {
   }
   send(c: Command) {
     this.pending.push({ p: this.me, c });
+  }
+  sendAs(p: number, c: Command) {
+    this.pending.push({ p, c });
   }
   close() {}
 }
@@ -53,6 +58,7 @@ export class ReplaySource implements TurnSource {
     return this.replay.endTick - this.at;
   }
   send() {}
+  sendAs() {}
   close() {}
 }
 
@@ -65,6 +71,8 @@ export class NetSource implements TurnSource {
   onDesync: ((tick: number, hashes: Record<number, number>) => void) | null = null;
   onLeft: ((name: string) => void) | null = null;
   onClosed: (() => void) | null = null;
+  onChat: ((from: number, name: string, text: string) => void) | null = null;
+  onPing: ((from: number, x: number, y: number) => void) | null = null;
 
   constructor(private ws: WebSocket) {
     ws.addEventListener("message", (e) => this.onMessage(JSON.parse(String(e.data)) as ServerMsg));
@@ -86,6 +94,12 @@ export class NetSource implements TurnSource {
       case "left":
         this.onLeft?.(m.name);
         break;
+      case "chat":
+        this.onChat?.(m.from, m.name, m.text);
+        break;
+      case "mping":
+        this.onPing?.(m.from, m.x, m.y);
+        break;
     }
   }
 
@@ -104,6 +118,15 @@ export class NetSource implements TurnSource {
   }
   send(c: Command) {
     this.raw({ type: "cmd", c });
+  }
+  sendAs(p: number, c: Command) {
+    this.raw({ type: "cmd", c, as: p });
+  }
+  chat(text: string) {
+    this.raw({ type: "chat", text });
+  }
+  ping(x: number, y: number) {
+    this.raw({ type: "mping", x, y });
   }
   sendHash(tick: number, h: number) {
     this.raw({ type: "hash", tick, h });
