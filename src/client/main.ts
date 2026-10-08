@@ -7,8 +7,8 @@ import { Game, type GameSetup } from "./game.ts";
 import { GltfModels } from "./render/gltf.ts";
 import { NetSource, ReplaySource, SoloSource } from "./sources.ts";
 import { controlsHtml } from "./controls.ts";
-import { FACTION_COLORS, teamColor } from "./style.ts";
-import { builtinMapPicture, pokemonPicture } from "./lobbyArt.ts";
+import { teamColor } from "./style.ts";
+import { builtinMapPicture } from "./lobbyArt.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector(s) as T;
 const lobby = $("#lobby");
@@ -60,15 +60,6 @@ $("#factions").addEventListener("click", (e) => {
   showFaction("#factions", faction);
 });
 const pickFaction = (f: number) => (f >= 0 ? f : Math.floor(Math.random() * 3));
-
-// Evolution lines, drawn with the game's own models (after the page is up, it takes a moment).
-setTimeout(() => {
-  for (const el of document.querySelectorAll<HTMLElement>("[data-line]")) {
-    const f = Number((el.closest("[data-f]") as HTMLElement).dataset.f);
-    const keys = el.dataset.line!.split(",");
-    el.innerHTML = keys.map((k) => `<img src="${pokemonPicture(k, FACTION_COLORS[f])}" alt="${k}" title="${k[0].toUpperCase() + k.slice(1)}">`).join("<i>›</i>");
-  }
-}, 30);
 
 // ------------------------------------------------------------ step 3: mode
 
@@ -442,3 +433,5 @@ if (params.has("room") && roomInput.value) {
   // Opened an invite link: the room is filled in, one click to join.
   $<HTMLButtonElement>("#btn-join").focus();
 }
+
+(window as unknown as { __lobbyReady: boolean }).__lobbyReady = true;

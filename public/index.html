@@ -27,29 +27,28 @@
         <!-- Step 2 -->
         <section class="lb-step">
           <h2><b>2</b> Pick your faction</h2>
-          <p class="lb-help">Everyone builds the same bases with Pikachu workers. Your faction decides your army: you train the first Pokémon and evolve it into stronger ones.</p>
           <div id="factions" class="lb-factions">
             <button class="lb-faction fire" data-f="0">
-              <span class="lb-fname">🔥 Fire</span>
-              <span class="lb-line" data-line="charmander,charmeleon,charizard"></span>
-              <span class="lb-fdesc">Fast, cheap swarm that ends as a <b>flying</b> Charizard.</span>
+              <img src="img/charmander.png" alt="">
+              <span class="lb-fname">Fire</span>
+              <span class="lb-fdesc">Fast and aggressive</span>
             </button>
             <button class="lb-faction water" data-f="1">
-              <span class="lb-fname">💧 Water</span>
-              <span class="lb-line" data-line="squirtle,wartortle,blastoise"></span>
-              <span class="lb-fdesc">Ranged shooters that hit air, ending in long-range Blastoise artillery.</span>
+              <img src="img/squirtle.png" alt="">
+              <span class="lb-fname">Water</span>
+              <span class="lb-fdesc">Ranged and steady</span>
             </button>
             <button class="lb-faction grass" data-f="2">
-              <span class="lb-fname">🌿 Grass</span>
-              <span class="lb-line" data-line="bulbasaur,ivysaur,venusaur"></span>
-              <span class="lb-fdesc">Tough and slow, ending in a huge Venusaur with Solar Beam.</span>
+              <img src="img/bulbasaur.png" alt="">
+              <span class="lb-fname">Grass</span>
+              <span class="lb-fdesc">Tough and patient</span>
             </button>
             <button class="lb-faction random" data-f="-1">
-              <span class="lb-fname">🎲 Random</span>
-              <span class="lb-fdesc">Surprise me each game.</span>
+              <img src="img/dice.svg" alt="">
+              <span class="lb-fname">Random</span>
+              <span class="lb-fdesc">Surprise me</span>
             </button>
           </div>
-          <p class="lb-help">Type matchups: 🔥 beats 🌿, 🌿 beats 💧, 💧 beats 🔥.</p>
         </section>
 
         <!-- Step 3 -->
@@ -248,6 +247,16 @@
     </div>
   </div>
 
-  <script type="module" src="main.js"></script>
+  <script>
+    // If the game script fails to load or crashes, say so on the page instead of leaving dead buttons.
+    function showBootError(msg) {
+      var el = document.getElementById("lobby-error");
+      if (el) el.textContent = "Something went wrong loading the game: " + msg + " (try Ctrl+F5, or another browser)";
+    }
+    window.addEventListener("error", function (e) { showBootError(e.message || "a file failed to load"); });
+    window.addEventListener("unhandledrejection", function (e) { showBootError(String(e.reason)); });
+    setTimeout(function () { if (!window.__lobbyReady) showBootError("the game script didn't start"); }, 8000);
+  </script>
+  <script type="module" src="main.js" onerror="showBootError('main.js could not be downloaded')"></script>
 </body>
 </html>

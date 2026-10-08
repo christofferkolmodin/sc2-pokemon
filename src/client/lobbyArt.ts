@@ -1,64 +1,8 @@
-import * as THREE from "three";
-import { KINDS } from "../sim/units.ts";
 import { type GameMap, makeMap } from "../sim/map.ts";
-import { assetFor } from "./render/assets.ts";
-import { type AnimState, partMatrix } from "./render/animate.ts";
-import { unitMaterial } from "./render/materials.ts";
 
-/**
- * Pictures for the lobby: Pokémon portraits rendered from the game's own
- * models, and preview images of built-in maps (imported maps bring a minimap).
- */
+/** Preview images of built-in maps for the lobby (imported maps bring their own minimap). */
 
-let renderer: THREE.WebGLRenderer | null = null;
 const cache = new Map<string, string>();
-
-/** A transparent PNG of a Pokémon, three-quarter view, scarf in `color`. */
-export function pokemonPicture(key: string, color: string, size = 128): string {
-  const id = `${key}:${color}:${size}`;
-  const hit = cache.get(id);
-  if (hit) return hit;
-  const kind = KINDS.find((k) => k.key === key);
-  if (!kind) return "";
-  if (!renderer) {
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  }
-  renderer.setSize(size, size, false);
-  renderer.setClearColor(0x000000, 0);
-  const scene = new THREE.Scene();
-  scene.add(new THREE.HemisphereLight("#dfeaff", "#40362a", 1.6));
-  const sun = new THREE.DirectionalLight("#ffffff", 2.4);
-  sun.position.set(2, 3, 4);
-  scene.add(sun);
-  const group = new THREE.Group();
-  const a = assetFor(kind.id);
-  const s: AnimState = { phase: 0, moving: 0, t: 0, attack: -1, seed: 0 };
-  const mats: THREE.Material[] = [];
-  for (const part of a.parts) {
-    const m = unitMaterial(false);
-    if (part.tint === "team") m.color = new THREE.Color(color);
-    mats.push(m);
-    const mesh = new THREE.Mesh(part.geo, m);
-    mesh.matrixAutoUpdate = false;
-    partMatrix(mesh.matrix, a, part, s);
-    group.add(mesh);
-  }
-  group.rotation.y = -Math.PI / 2 + 0.6;
-  scene.add(group);
-  const box = new THREE.Box3().setFromObject(group);
-  const c = box.getCenter(new THREE.Vector3());
-  const r = box.getSize(new THREE.Vector3()).length() * 0.5;
-  const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-  const dist = r / Math.sin((15 * Math.PI) / 180);
-  cam.position.set(c.x, c.y + dist * 0.3, c.z + dist * 0.95);
-  cam.lookAt(c);
-  renderer.render(scene, cam);
-  const url = renderer.domElement.toDataURL();
-  for (const m of mats) m.dispose();
-  cache.set(id, url);
-  return url;
-}
 
 /** Overview image of a built-in map: levels, cliffs, resources and start locations. */
 export function builtinMapPicture(key: string, px = 150): string {

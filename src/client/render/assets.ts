@@ -409,6 +409,33 @@ export function assetFor(kind: number, rich = false): Asset {
   return a;
 }
 
+const carryCache = new Map<string, THREE.BufferGeometry>();
+
+/**
+ * What a worker holds while bringing resources home: a cluster of blue
+ * mineral crystals, or a glowing green gas canister. Centred on the origin,
+ * about a fifth of a tile across.
+ */
+export function carryGeometry(gas: boolean): THREE.BufferGeometry {
+  const key = gas ? "gas" : "mineral";
+  const hit = carryCache.get(key);
+  if (hit) return hit;
+  const b = new Builder();
+  if (gas) {
+    b.cyl(0.07, 0.07, 0.13, "#3c4248", { p: [0, 0, 0] }, 10);
+    b.cyl(0.058, 0.058, 0.1, "#5bff7a", { p: [0, 0.005, 0], glow: 0.9 }, 10);
+    b.cyl(0.075, 0.075, 0.02, "#7d8791", { p: [0, 0.07, 0] }, 10);
+    b.cyl(0.075, 0.075, 0.02, "#7d8791", { p: [0, -0.06, 0] }, 10);
+  } else {
+    b.oct(0.05, 0.1, "#57c8ff", { p: [0, 0.02, 0], r: [0.25, 0, 0.15], glow: 0.45 });
+    b.oct(0.04, 0.075, "#7fdcff", { p: [0.05, -0.005, 0.03], r: [-0.4, 0.3, -0.5], glow: 0.45 });
+    b.oct(0.035, 0.065, "#3fb4f0", { p: [-0.045, -0.01, -0.03], r: [0.5, 0, 0.6], glow: 0.45 });
+  }
+  const g = b.build();
+  carryCache.set(key, g);
+  return g;
+}
+
 /** Build every Pokémon now (a few hundred ms), e.g. behind the loading screen. */
 export function preloadAll() {
   for (const k of KINDS) assetFor(k.id);

@@ -1,0 +1,28 @@
+fourth faction: lightning. Uses pichu -> pikachu -> raichu
+
+all four faction should have their own workers, for example maybe oddish for grass.
+
+when moving a unit, it should make a sound which matches the pokemons expected sound. So like "pika-pika!" for pikachu.
+
+Voice lines like "not enough minerals" should probably have the voice of ash ketchum or professor oak for example.
+
+When trying to build something i dont have enough minerals for, it shouldnt let me attempt to "place" the building. It should just block say not enough minerals and nothing happens if you understand
+
+we should also have voice lines for when a pokemon dies
+
+for control groups, each control group should have a reserved location, similar to how it works in starcraft. So if i bind something to "1" it should always fall in the left-most slot
+
+or if i bind something to "5", it should fall in the fifth slot by default
+
+would it be possible to have attacks that have more cool effects? like for example for bulbsaur something that actually looks like a vine whipping instead of a green laser beam.
+
+after being defeated, i should be able to observe the whole map with no fog of war
+
+when hovering over the menu like the bottom menu in full screen i need to see the cursor over the bottom menu, currently its hidden
+
+I bought the domain pokecraft.party, can we move the connection from pokecraft.win to pokecraft.party?
+
+can you do some playtesting especially for lobby creation and the overall front page/lobby page, it needs to be more intuitive user experience and nice looking
+
+
+

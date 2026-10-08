@@ -12,7 +12,7 @@ import type { Camera } from "../camera.ts";
 import type { Selection } from "../selection.ts";
 import { FACTION_COLORS, SELECT_ENEMY, SELECT_NEUTRAL, SELECT_OWN, teamColor } from "../style.ts";
 import { Batch } from "./batch.ts";
-import { type Asset, assetFor, doodadAsset } from "./assets.ts";
+import { type Asset, assetFor, carryGeometry, doodadAsset } from "./assets.ts";
 import { type AnimState, bodyOffset, partMatrix } from "./animate.ts";
 import { Effects } from "./effects.ts";
 import { type GltfModels, GltfUnits } from "./gltf.ts";
@@ -617,6 +617,11 @@ export class Renderer {
     if (this.gltfUnits && this.gltf!.has(u.kind)) {
       // Real model: animated skinned mesh, plus a team-coloured ring so players stay readable.
       this.gltfUnits.draw(u.id, u.kind, x, base, y, v.face, v.moving, u.attackTick, dt);
+      if (u.carry > 0) {
+        tmpQ.setFromAxisAngle(UP, -v.face);
+        tmpM.compose(tmpV.set(x, base, y), tmpQ, new THREE.Vector3(1, 1, 1));
+        this.drawCarry(u, tmpM, asset);
+      }
       if (!highlighted) this.ring(x, y, this.heights.at(x, y), u.radius / FP + 0.05, teamColor(u.owner), 0.5);
       if (u.morphTo >= 0) this.effects.evolving(new THREE.Vector3(x, base, y), asset.height, dt);
       return;
@@ -647,10 +652,16 @@ export class Renderer {
       const p = f.p.clone().applyMatrix4(tmpL).applyMatrix4(tmpM);
       this.effects.flame(p, f.size, dt);
     }
-    if (u.carry > 0) {
-      const p = new THREE.Vector3(0.12, asset.height * 0.55, 0).applyMatrix4(tmpM);
-      this.effects.sprite(p, 0.28, u.carryGas ? [0.35, 1, 0.45, 1] : [0.35, 0.8, 1, 1]);
-    }
+    if (u.carry > 0) this.drawCarry(u, tmpM, asset);
+  }
+
+  /** Minerals or gas held in front of a worker's belly on the way back to the Pokémon Center. */
+  private drawCarry(u: Unit, model: THREE.Matrix4, asset: Asset) {
+    const h = asset.height;
+    tmpL.makeTranslation(0.21 * (h / 0.8), 0.37 * (h / 0.8), 0);
+    tmpW.multiplyMatrices(model, tmpL);
+    const geo = carryGeometry(u.carryGas);
+    this.batch(u.carryGas ? "carry:gas" : "carry:mineral", geo, this.matUnit).push(tmpW, 1, 1, 1);
   }
 
   private drawStructure(kind: number, owner: number, x: number, y: number, prog: number, t: number, scale: number, hit: number, rich = false) {
