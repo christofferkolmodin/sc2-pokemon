@@ -1,0 +1,27 @@
+{
+  "name": "sc2-pokemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private browser RTS with SC2 feel and starter Pok\u00e9mon. Friends only, not for publication.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "dev": "node tools/dev.mjs",
+    "start": "node tools/build.mjs && tsx src/server/main.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "tsx": "^4.20.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  }
+}

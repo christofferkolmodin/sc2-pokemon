@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SC2 Pokémon</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ============================== Lobby ============================== -->
+  <main id="lobby">
+    <div class="lobby-card">
+      <h1>SC2 <span>Pokémon</span></h1>
+      <p class="tag">Private build · friends only · movement lab</p>
+
+      <div id="lobby-form">
+        <label>Trainer name <input id="name" maxlength="16" autocomplete="off"></label>
+        <label>Room <input id="room" maxlength="16" value="lobby" autocomplete="off"></label>
+        <div class="row">
+          <button id="btn-join" class="primary">Join room</button>
+          <button id="btn-solo">Solo feel lab</button>
+        </div>
+        <div class="row">
+          <label class="file">Watch replay…<input id="replay-file" type="file" accept=".json,application/json"></label>
+        </div>
+      </div>
+
+      <div id="room-view" hidden>
+        <h2>Room <span id="room-code"></span></h2>
+        <ul id="room-players"></ul>
+        <p class="hint" id="room-hint"></p>
+        <div class="row">
+          <button id="btn-start" class="primary">Start game</button>
+          <button id="btn-leave">Leave</button>
+        </div>
+      </div>
+
+      <p id="lobby-error" class="error"></p>
+      <details class="controls">
+        <summary>Controls (SC2 standard)</summary>
+        <div id="controls-list"></div>
+      </details>
+    </div>
+  </main>
+
+  <!-- =============================== Game =============================== -->
+  <div id="game" hidden>
+    <canvas id="view"></canvas>
+
+    <div id="topbar">
+      <div class="left">
+        <button data-ui id="btn-menu-full" title="Fullscreen + lock cursor and keys (recommended)">⛶ Fullscreen</button>
+        <button data-ui id="btn-tuning" title="Movement tuning (F10)">Tuning <kbd>F10</kbd></button>
+        <button data-ui id="btn-replay" title="Download a replay of this game">Save replay</button>
+        <button data-ui id="btn-help" title="Controls">?</button>
+        <button data-ui id="btn-quit">Leave</button>
+        <span id="replay-controls" hidden>
+          <button data-ui data-speed="0">❚❚</button>
+          <button data-ui data-speed="1">1×</button>
+          <button data-ui data-speed="2">2×</button>
+          <button data-ui data-speed="4">4×</button>
+          <button data-ui data-speed="8">8×</button>
+        </span>
+      </div>
+      <div class="right" id="stats"></div>
+    </div>
+
+    <div id="banner" hidden></div>
+    <div id="toast"></div>
+
+    <aside id="tuning" hidden>
+      <h3>Movement tuning <small>changes apply to everyone in the game</small></h3>
+      <div id="tune-list"></div>
+      <h3>Spawn at camera centre</h3>
+      <div id="spawn-list"></div>
+      <p class="hint">Tip: record a short SC2 clip of the same scenario and tune until they look alike side by side.</p>
+    </aside>
+
+    <aside id="help" hidden>
+      <h3>Controls</h3>
+      <div id="help-list"></div>
+    </aside>
+
+    <div id="console">
+      <div id="mm-wrap" data-minimap><canvas id="minimap" data-minimap></canvas></div>
+      <div id="center">
+        <div id="groups"></div>
+        <div id="selpanel"></div>
+      </div>
+      <div id="cmdcard"></div>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
