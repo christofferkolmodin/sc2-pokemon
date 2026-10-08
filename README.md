@@ -15,7 +15,7 @@ A browser RTS that plays like StarCraft 2, with starter Pokémon instead of SC2 
 3. **Look decent.** SC2-level art is out of reach for a hobby project; a clean, readable indie look is the target. Art can be swapped later because rendering is separate from game logic.
 
 ## Quick start
-Requires Node.js 20+.
+Requires Node.js 20.11 or newer.
 
 ```bash
 npm install
