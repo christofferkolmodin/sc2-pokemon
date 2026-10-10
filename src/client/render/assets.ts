@@ -32,6 +32,9 @@ export interface Asset {
   height: number;
   /** Where carried minerals or gas are held, if the model sets it. */
   carry?: THREE.Vector3;
+  /** Part the carried load moves with, and its size. */
+  carryPart?: string;
+  carryScale?: number;
 }
 
 const cache = new Map<string, Asset>();
@@ -159,6 +162,8 @@ function pokemonAsset(key: string): Asset {
     flames: def.flames.map((f) => ({ part: f.part, p: new THREE.Vector3(...f.p), size: f.size })),
     muzzle: def.muzzle.map((m) => new THREE.Vector3(...m)),
     carry: def.carry ? new THREE.Vector3(...def.carry) : undefined,
+    carryPart: def.carryPart,
+    carryScale: def.carryScale,
     gait: def.gait,
     stride: def.stride,
     radius,

@@ -106,6 +106,7 @@ const LIGHT_DIR = new THREE.Vector3(-0.45, 0.82, 0.36).normalize();
 const tmpM = new THREE.Matrix4();
 const tmpL = new THREE.Matrix4();
 const tmpW = new THREE.Matrix4();
+const tmpCarry = new THREE.Matrix4();
 const tmpV = new THREE.Vector3();
 const tmpQ = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -683,14 +684,17 @@ export class Renderer {
       const p = f.p.clone().applyMatrix4(tmpL).applyMatrix4(tmpM);
       this.effects.flame(p, f.size, dt);
     }
-    if (u.carry > 0) this.drawCarry(u, tmpM, asset);
+    if (u.carry > 0) this.drawCarry(u, tmpM, asset, s);
   }
 
-  /** Minerals or gas held in front of a worker's belly on the way back to the Pokémon Center. */
-  private drawCarry(u: Unit, model: THREE.Matrix4, asset: Asset) {
+  /** Minerals or gas a worker brings back to the Pokémon Center: in front of the belly, or in the mouth. */
+  private drawCarry(u: Unit, model: THREE.Matrix4, asset: Asset, s?: AnimState) {
     const h = asset.height;
     if (asset.carry) tmpL.makeTranslation(asset.carry.x, asset.carry.y, asset.carry.z);
     else tmpL.makeTranslation(0.21 * (h / 0.8), 0.37 * (h / 0.8), 0);
+    if (asset.carryScale) tmpL.scale(tmpV.setScalar(asset.carryScale));
+    const part = s && asset.carryPart ? asset.parts.find((p) => p.name === asset.carryPart) : undefined;
+    if (part) tmpL.premultiply(partMatrix(tmpCarry, asset, part, s!));
     tmpW.multiplyMatrices(model, tmpL);
     const geo = carryGeometry(u.carryGas);
     this.batch(u.carryGas ? "carry:gas" : "carry:mineral", geo, this.matUnit).push(tmpW, 1, 1, 1);
@@ -774,7 +778,7 @@ export class Renderer {
         v = { sx, sy, sh, d0: Math.max(0.1, Math.hypot(p.tx / FP - sx, p.ty / FP - sy)), fx, age: 0 };
         this.proj.set(p.id, v);
         // Streams pour from the mouth to the target for the whole flight.
-        if ((fx === "flame" || fx === "water" || fx === "hydro" || fx === "bubble") && this.seen(sx, sy)) {
+        if ((fx === "flame" || fx === "ember" || fx === "water" || fx === "hydro" || fx === "bubble") && this.seen(sx, sy)) {
           const tiles = (KINDS[p.kind].weapon!.speed * 22.4) / FP;
           const to = new THREE.Vector3(p.tx / FP, this.projHeight(p.target, p.air, p.tx / FP, p.ty / FP), p.ty / FP);
           this.effects.jet(fx, new THREE.Vector3(sx, sh, sy), to, v.d0 / Math.max(1, tiles));

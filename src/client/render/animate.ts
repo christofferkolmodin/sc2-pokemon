@@ -48,6 +48,14 @@ export function partMatrix(out: THREE.Matrix4, a: Asset, part: AssetPart, s: Ani
       const k = part.anim === "armA" ? 1 : -1;
       return rotateAbout(out, part.pivot, 0, 0, -sw * 0.5 * k + atk * 1.1);
     }
+    case "head": {
+      // Nods with the stride and looks around a little when idle; a bite rears back, then snaps down and forward.
+      let pitch = Math.sin(s.phase * 2) * 0.05 * s.moving + Math.sin(s.t * 0.9 + s.seed) * 0.04 * (1 - s.moving);
+      const a = s.attack;
+      if (a >= 0) pitch += a < 0.35 ? 0.32 * (a / 0.35) : a < 0.55 ? 0.32 - 0.6 * ((a - 0.35) / 0.2) : -0.28 * (1 - (a - 0.55) / 0.45);
+      const turn = Math.sin(s.t * 0.6 + s.seed * 2) * 0.12 * (1 - s.moving) * (a >= 0 ? 0 : 1);
+      return rotateAbout(out, part.pivot, 0, turn, pitch);
+    }
     case "tail":
       return rotateAbout(out, part.pivot, 0, Math.sin(s.t * 2.4 + s.seed) * 0.22 + sw * 0.25, Math.sin(s.t * 1.7 + s.seed) * 0.05);
     case "wingL":

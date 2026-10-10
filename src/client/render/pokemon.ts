@@ -33,6 +33,10 @@ export interface PokeModel {
   stride: number;
   /** Where a worker holds carried minerals or gas (model space); defaults to in front of the belly. */
   carry?: V3;
+  /** Part the carried load moves with (e.g. "head" for a load held in the mouth). */
+  carryPart?: string;
+  /** Size of the carried load (1 = default). */
+  carryScale?: number;
 }
 
 // --------------------------------------------------------------- helpers
@@ -112,12 +116,26 @@ const REDEYE = "#c3283a";
 
 const GROW = "#ef8a36";
 const GROWFUR = "#f6e4b8";
+const GROWEAR = "#c96a28";
 
+/** Growlithe's legs: slim, with a black stripe and a rounded paw. */
+function growLeg(x: number, zz: number): Prim[] {
+  return [
+    cap([x, 0.3, zz], [x + 0.015, 0.05, zz + 0.01], 0.05, 0.042, GROW),
+    paint(ell([x + 0.01, 0.17, zz + 0.01], [0.06, 0.014, 0.06], DARK, { rot: [0, 0, 0.25] })),
+    ell([x + 0.04, 0.032, zz + 0.01], [0.06, 0.032, 0.045], GROW, { k2: 0.02 }),
+  ];
+}
+
+/** A puppy on all fours, head up, carrying minerals in its mouth. */
 const growlithe: PokeModel = {
-  cell: 0.018,
-  gait: "biped",
-  stride: 0.3,
-  muzzle: [[0.3, 0.56, 0]],
+  cell: 0.016,
+  gait: "quad",
+  stride: 0.28,
+  muzzle: [[0.48, 0.55, 0]],
+  carry: [0.5, 0.485, 0],
+  carryPart: "head",
+  carryScale: 0.85,
   flames: [],
   parts: [
     {
@@ -125,31 +143,42 @@ const growlithe: PokeModel = {
       anim: "body",
       pivot: [0, 0, 0],
       prims: [
-        ell([0, 0.3, 0], [0.19, 0.22, 0.18], GROW),
-        // Fluffy cream chest.
-        ell([0.1, 0.36, 0], [0.12, 0.14, 0.13], GROWFUR, { k2: 0.04 }),
-        // Black tiger stripes on the sides.
-        ...([0.2, 0.3] as number[]).map((y) => paint(ell([-0.08, y, 0.16], [0.03, 0.012, 0.05], DARK, { mirror: true, rot: [0, 0, 0.5] }))),
-        ell([0.05, 0.6, 0], [0.19, 0.17, 0.19], GROW, { k2: 0.07 }),
-        ell([0.22, 0.55, 0], [0.09, 0.065, 0.085], GROWFUR, { k2: 0.04 }),
-        paint(ell([0.305, 0.57, 0], [0.025, 0.02, 0.025], DARK)),
-        ...eyes([0.19, 0.65, 0.09], [0.03, 0.045, 0.03], DARK),
-        // Cream tuft on top of the head.
-        ell([0.0, 0.76, 0], [0.11, 0.06, 0.09], GROWFUR, { k2: 0.04 }),
-        ell([-0.02, 0.77, 0.13], [0.05, 0.08, 0.05], GROW, { mirror: true, rot: [0.45, 0, 0], k2: 0.03 }),
-        paint(ell([0.02, 0.77, 0.13], [0.03, 0.05, 0.035], DARK, { mirror: true, rot: [0.45, 0, 0] })),
+        ell([-0.03, 0.36, 0], [0.25, 0.15, 0.15], GROW),
+        ell([-0.17, 0.35, 0], [0.11, 0.13, 0.14], GROW, { k2: 0.05 }),
+        // Shaggy cream mane on the chest and neck.
+        ell([0.15, 0.37, 0], [0.11, 0.15, 0.13], GROWFUR, { k2: 0.05 }),
+        cap([0.12, 0.42, 0], [0.22, 0.53, 0], 0.09, 0.08, GROW, { k2: 0.04 }),
+        // Black tiger stripes across the back.
+        ...([-0.19, -0.08, 0.03] as number[]).map((x) => paint(ell([x, 0.45, 0.09], [0.022, 0.08, 0.035], DARK, { mirror: true, rot: [0.7, 0, 0] }))),
       ],
     },
-    ...pair("arm", [cap([0.1, 0.4, 0.14], [0.2, 0.32, 0.16], 0.045, 0.04, GROW)], [0.1, 0.4, 0.14], "armA", "armB"),
-    ...pair("leg", [ell([0.05, 0.05, 0.1], [0.09, 0.05, 0.06], GROW), cap([0.0, 0.16, 0.09], [0.03, 0.06, 0.1], 0.06, 0.05, GROW)], [0.0, 0.18, 0.09], "legA", "legB"),
     {
-      // Big fluffy cream tail.
+      name: "head",
+      anim: "head",
+      pivot: [0.2, 0.5, 0],
+      prims: [
+        ell([0.3, 0.6, 0], [0.14, 0.125, 0.135], GROW),
+        // Cream muzzle with a black nose and a mouth line.
+        ell([0.42, 0.54, 0], [0.085, 0.06, 0.07], GROWFUR, { k2: 0.04 }),
+        paint(ell([0.5, 0.565, 0], [0.025, 0.02, 0.028], DARK)),
+        paint(ell([0.47, 0.515, 0], [0.045, 0.006, 0.05], DARK)),
+        ...eyes([0.395, 0.635, 0.07], [0.021, 0.034, 0.024], DARK),
+        // Cream tuft on top of the head, and pointed ears.
+        ell([0.27, 0.72, 0], [0.1, 0.05, 0.08], GROWFUR, { k2: 0.04 }),
+        ell([0.23, 0.73, 0.11], [0.05, 0.08, 0.045], GROW, { mirror: true, rot: [0.45, 0, -0.2], k2: 0.03 }),
+        paint(ell([0.25, 0.73, 0.12], [0.03, 0.05, 0.03], GROWEAR, { mirror: true, rot: [0.45, 0, -0.2] })),
+      ],
+    },
+    ...pair("legF", growLeg(0.13, 0.1), [0.13, 0.3, 0.1], "legA", "legB"),
+    ...pair("legB", growLeg(-0.18, 0.1), [-0.18, 0.3, 0.1], "legB", "legA"),
+    {
+      // Big fluffy cream tail, held up.
       name: "tail",
       anim: "tail",
-      pivot: [-0.15, 0.22, 0],
-      prims: [cap([-0.15, 0.22, 0], [-0.28, 0.32, 0], 0.04, 0.06, GROWFUR), ell([-0.33, 0.38, 0], [0.08, 0.1, 0.07], GROWFUR, { k2: 0.03 })],
+      pivot: [-0.26, 0.42, 0],
+      prims: [cap([-0.26, 0.42, 0], [-0.36, 0.56, 0], 0.045, 0.06, GROWFUR), ell([-0.4, 0.64, 0], [0.09, 0.12, 0.085], GROWFUR, { k2: 0.04, rot: [0, 0, 0.4] })],
     },
-    scarf([0.03, 0.44, 0], 0.15, 0.032),
+    scarf([0.17, 0.47, 0], 0.11, 0.03, -0.75),
   ],
 };
 

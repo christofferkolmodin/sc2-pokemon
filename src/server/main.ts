@@ -154,7 +154,13 @@ const http = createServer(async (req, res) => {
       }
       return await serveFile(res, ASSET_DIR, rest);
     }
+    // Friendly page addresses; the old file names redirect so existing links keep working.
+    if (path === "/viewer.html" || path === "/pokedex/") {
+      res.writeHead(301, { location: "/pokedex" + url.search }).end();
+      return;
+    }
     if (path === "/") path = "/index.html";
+    if (path === "/pokedex") path = "/viewer.html";
     await serveFile(res, STATIC_DIR, path);
   } catch {
     res.writeHead(500).end();

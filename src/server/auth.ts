@@ -93,7 +93,7 @@ export class Gate {
 
   /** Answer a request that isn't logged in: the login page for pages, 401 for everything else. */
   deny(req: IncomingMessage, res: ServerResponse, path: string) {
-    if (path === "/" || path.endsWith(".html")) {
+    if (path === "/" || path === "/pokedex" || path.endsWith(".html")) {
       const url = new URL(req.url ?? "/", "http://x");
       this.page(res, "", url.pathname + url.search);
       return;

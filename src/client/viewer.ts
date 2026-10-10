@@ -1,25 +1,27 @@
 import * as THREE from "three";
 import { FP } from "../sim/fixed.ts";
 import { FACTION_NAMES, FACTION_UNITS, FACTION_WORKERS, KINDS, TYPE_NAMES, type UnitKind } from "../sim/units.ts";
-import { type Asset, assetFor } from "./render/assets.ts";
+import { type Asset, assetFor, carryGeometry } from "./render/assets.ts";
 import { type AnimState, bodyOffset, partMatrix } from "./render/animate.ts";
 import { unitMaterial } from "./render/materials.ts";
 
 /**
- * Pokédex (viewer.html): every Pokémon and structure on its own card with a
+ * Pokédex (/pokedex, served from viewer.html): every Pokémon and structure on its own card with a
  * live 3D model, grouped by faction (worker, then the evolution line), then
  * buildings and map objects. The grid wraps to the window, so nothing runs off
  * screen. All models are drawn by one WebGL canvas behind the page, one
  * scissored viewport per visible card.
  *
  * ?only=charizard shows one model up close (handy while sculpting
- * src/client/render/pokemon.ts); ?walk=0 stops the walk cycle, ?spin=0 the turntable.
+ * src/client/render/pokemon.ts); ?walk=0 stops the walk cycle, ?spin=0 the turntable,
+ * ?carry=1 has workers hold a mineral (?carry=gas: a gas canister).
  */
 
 const q = new URLSearchParams(location.search);
 const only = q.get("only");
 const walk = q.get("walk") !== "0";
 const spin = q.get("spin") !== "0";
+const carry = q.get("carry");
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));
@@ -41,6 +43,8 @@ interface Card {
   root: THREE.Group;
   asset: Asset;
   meshes: { mesh: THREE.Mesh; part: Asset["parts"][number] }[];
+  /** Carried mineral or gas (workers, with ?carry). */
+  load: THREE.Mesh | null;
   seed: number;
 }
 
@@ -62,6 +66,12 @@ function makeCard(kind: UnitKind, stage: HTMLElement | null, seed: number, close
     root.add(mesh);
     return { mesh, part };
   });
+  let load: THREE.Mesh | null = null;
+  if (carry && kind.worker) {
+    load = new THREE.Mesh(carryGeometry(carry === "gas"), mat.clone());
+    load.matrixAutoUpdate = false;
+    root.add(load);
+  }
   scene.add(root);
   // A soft disc to stand on.
   if (!closeUp) {
@@ -85,7 +95,7 @@ function makeCard(kind: UnitKind, stage: HTMLElement | null, seed: number, close
     camera.position.set(0, look.y + dist * 0.32, dist * 0.95);
     camera.lookAt(look);
   }
-  return { kind, stage, scene, camera, root, asset, meshes, seed };
+  return { kind, stage, scene, camera, root, asset, meshes, load, seed };
 }
 
 function animate(c: Card, t: number) {
@@ -103,6 +113,16 @@ function animate(c: Card, t: number) {
   for (const { mesh, part } of c.meshes) {
     partMatrix(m4, c.asset, part, s);
     mesh.matrix.makeTranslation(off.x, off.y, 0).multiply(m4);
+  }
+  if (c.load) {
+    // Same placement as the game (Renderer.drawCarry).
+    const a = c.asset;
+    const at = a.carry ?? new THREE.Vector3(0.21 * (a.height / 0.8), 0.37 * (a.height / 0.8), 0);
+    const local = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z);
+    if (a.carryScale) local.scale(new THREE.Vector3().setScalar(a.carryScale));
+    const part = a.carryPart ? a.parts.find((p) => p.name === a.carryPart) : undefined;
+    if (part) local.premultiply(partMatrix(m4, a, part, s));
+    c.load.matrix.makeTranslation(off.x, off.y, 0).multiply(local);
   }
 }
 
