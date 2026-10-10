@@ -233,6 +233,88 @@ export function terrainGeometry(H: Heights): THREE.BufferGeometry {
   return geo;
 }
 
+/**
+ * Per-tile inputs for painting ramps: which walkable tiles are ramps (between
+ * two cliff levels), each walkable tile's level, and how close each tile is
+ * to blocked ground (the cliffs along a ramp's sides).
+ */
+function rampFields(m: GameMap) {
+  const { w, h, level, terrain } = m;
+  const ramp = new Float32Array(w * h);
+  const lvl = new Float32Array(w * h);
+  const walk = new Float32Array(w * h);
+  const wall = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    walk[i] = terrain[i] ? 0 : 1;
+    lvl[i] = level[i];
+    ramp[i] = !terrain[i] && level[i] % 16 !== 0 ? 1 : 0;
+  }
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < w && ny < h && terrain[ny * w + nx]) n++;
+        }
+      wall[y * w + x] = Math.min(1, n / 3);
+    }
+  return { w, h, ramp, lvl, walk, wall };
+}
+
+/** Bilinear sample of a per-tile field at tile coordinates (tile centres at +0.5); `weight` skips tiles (e.g. blocked ones). */
+function sampleTiles(f: Float32Array, w: number, h: number, x: number, y: number, weight?: Float32Array): number {
+  const fx = x - 0.5;
+  const fy = y - 0.5;
+  const ix = Math.floor(fx);
+  const iy = Math.floor(fy);
+  const ax = fx - ix;
+  const ay = fy - iy;
+  let s = 0;
+  let ws = 0;
+  for (let k = 0; k < 4; k++) {
+    const tx = Math.max(0, Math.min(w - 1, ix + (k & 1)));
+    const ty = Math.max(0, Math.min(h - 1, iy + (k >> 1)));
+    let wt = (k & 1 ? ax : 1 - ax) * (k >> 1 ? ay : 1 - ay);
+    if (weight) wt *= weight[ty * w + tx];
+    s += f[ty * w + tx] * wt;
+    ws += wt;
+  }
+  return ws > 1e-6 ? s / ws : 0;
+}
+
+/**
+ * Ramps, SC2-style: a worn path in the ground's own hue with soft, broken
+ * edges, step-like bands along the height contours so the incline reads at a
+ * glance, and darker margins where the ramp meets the cliffs beside it.
+ */
+function paintRamp(R: ReturnType<typeof rampFields>, m: GameMap, x: number, y: number, r: number, g: number, b: number): [number, number, number] {
+  if (x < -1 || y < -1 || x > m.w + 1 || y > m.h + 1) return [r, g, b];
+  const raw = sampleTiles(R.ramp, R.w, R.h, x, y);
+  if (raw <= 0.01) return [r, g, b];
+  const edgeNoise = (fbm(x * 1.3 + 3, y * 1.3 - 7) - 0.5) * 0.45;
+  const mask = smooth(0.2, 0.62, raw + edgeNoise);
+  if (mask <= 0) return [r, g, b];
+  // Worn path: lighter and a little warmer than the ground around it, keeping its hue.
+  const lum = (r + g + b) / 3;
+  const worn = 0.8 + fbm(x * 2.4, y * 2.4 + 9) * 0.35;
+  let pr = (r * 0.7 + lum * 0.3) * 1.22 * worn + 0.05;
+  let pg = (g * 0.7 + lum * 0.3) * 1.17 * worn + 0.04;
+  let pb = (b * 0.7 + lum * 0.3) * 1.08 * worn + 0.02;
+  // Steps: a sawtooth along the level, one band per quarter cliff level (about a tile on most ramps).
+  const lv = sampleTiles(R.lvl, R.w, R.h, x, y, R.walk) / 4;
+  const t = lv - Math.floor(lv);
+  const step = 0.93 + 0.1 * smooth(0, 0.85, t) - 0.09 * smooth(0.85, 1, t);
+  // Margins along the cliffs.
+  const wall = sampleTiles(R.wall, R.w, R.h, x, y);
+  const side = 1 - smooth(0.6, 1, wall) * 0.12;
+  pr *= step * side;
+  pg *= step * side;
+  pb *= step * side;
+  return [r + (pr - r) * mask, g + (pg - g) * mask, b + (pb - b) * mask];
+}
+
 /** Palette for maps without a minimap image (lush SC2 "Bel'Shir"-like). */
 const PALETTE = {
   low: [0.46, 0.4, 0.31],
@@ -268,6 +350,7 @@ export function paintAlbedo(H: Heights, m: GameMap, minimap: HTMLImageElement | 
     mm = x2.getImageData(0, 0, c2.width, c2.height);
   }
   const cliff = classify(m);
+  const ramps = rampFields(m);
   const img = ctx.createImageData(W, Hh);
   for (let py = 0; py < Hh; py++)
     for (let px = 0; px < W; px++) {
@@ -326,13 +409,8 @@ export function paintAlbedo(H: Heights, m: GameMap, minimap: HTMLImageElement | 
           gg = gg * 0.4 + PALETTE.rock[1] * 0.6;
           b = b * 0.4 + PALETTE.rock[2] * 0.6;
         }
-        if (inside && m.nobuild[ti] && !m.terrain[ti]) {
-          // Ramps: worn path colour.
-          r = r * 0.7 + 0.55 * 0.3;
-          gg = gg * 0.7 + 0.48 * 0.3;
-          b = b * 0.7 + 0.36 * 0.3;
-        }
       }
+      [r, gg, b] = paintRamp(ramps, m, x, y, r, gg, b);
       const vary = 0.86 + fine * 0.28;
       r *= vary;
       gg *= vary;
