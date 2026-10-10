@@ -176,7 +176,7 @@ export class Renderer {
     const m = world.map;
     if (render.heights) {
       const res = m.w * m.h > 26000 ? 1 : 2;
-      this.heights = new Heights(importedHeights(render.heights, res), res);
+      this.heights = new Heights(importedHeights(render.heights, res, m), res);
     } else {
       this.heights = new Heights(builtinHeights(m, 2), 2);
     }

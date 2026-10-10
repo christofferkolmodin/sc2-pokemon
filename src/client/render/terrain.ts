@@ -133,12 +133,79 @@ export function builtinHeights(m: GameMap, res = 2): HeightGrid {
   return { x0, y0, w, h, data };
 }
 
+/**
+ * SC2 draws ramps as separate cliff models on top of its height map, so the
+ * imported heights have no slope there: a ramp is flat ground ending in a
+ * drop. Rebuild ramp heights from the sim's per-tile levels (which do rise
+ * smoothly across the ramp), at every vertex that touches a ramp tile, and
+ * return a mask of the vertices that were changed.
+ */
+function rampHeights(r: NonNullable<RenderData["heights"]>, m: GameMap): { data: Float32Array; mask: Float32Array } {
+  const data = Float32Array.from(r.data);
+  const mask = new Float32Array(r.w * r.h);
+  const tile = (tx: number, ty: number) => (tx >= 0 && ty >= 0 && tx < m.w && ty < m.h ? ty * m.w + tx : -1);
+  const isRamp = (i: number) => i >= 0 && !m.terrain[i] && m.level[i] % 16 !== 0;
+  for (let j = 0; j < r.h; j++)
+    for (let i = 0; i < r.w; i++) {
+      // Vertex (i, j) is the corner shared by tiles (x-1..x, y-1..y).
+      const x = r.x0 + i;
+      const y = r.y0 + j;
+      const around = [tile(x - 1, y - 1), tile(x, y - 1), tile(x - 1, y), tile(x, y)];
+      if (!around.some(isRamp)) continue;
+      let sum = 0;
+      let n = 0;
+      for (const t of around)
+        if (t >= 0 && !m.terrain[t]) {
+          sum += (m.level[t] / 16) * LEVEL_HEIGHT;
+          n++;
+        }
+      if (!n) continue;
+      // Imported ground sits a hair above the level grid; keep that offset so the ramp meets it without a seam.
+      const k = j * r.w + i;
+      const lv = sum / n;
+      const offset = Math.abs(r.data[k] - lv) < 0.3 ? r.data[k] - lv : 0.1;
+      data[k] = lv + offset;
+      mask[k] = 1;
+    }
+  // Blocked vertices beside a ramp keep SC2's ground height under the missing cliff model, which
+  // can leave a ditch between the ramp and the plateau; lift the two rings around it to the ramp's height.
+  let src = mask;
+  for (let ring = 0; ring < 2; ring++) {
+    const lifted = Float32Array.from(data);
+    const next = Float32Array.from(src);
+    for (let j = 0; j < r.h; j++)
+      for (let i = 0; i < r.w; i++) {
+        const k = j * r.w + i;
+        if (src[k]) continue;
+        let sum = 0;
+        let n = 0;
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + di;
+          const jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= r.w || jj >= r.h || !src[jj * r.w + ii]) continue;
+          sum += data[jj * r.w + ii];
+          n++;
+        }
+        if (n) {
+          lifted[k] = Math.max(data[k], sum / n);
+          next[k] = 1;
+        }
+      }
+    data.set(lifted);
+    src = next;
+  }
+  return { data, mask };
+}
+
 /** Imported heights are one vertex per tile; upsample them (bicubic-ish) with a little rock noise on steep parts. */
-export function importedHeights(r: NonNullable<RenderData["heights"]>, res = 2): HeightGrid {
+export function importedHeights(src: NonNullable<RenderData["heights"]>, res = 2, m?: GameMap): HeightGrid {
+  const fixed = m ? rampHeights(src, m) : null;
+  const r = fixed ? { ...src, data: fixed.data } : src;
   const w = (r.w - 1) * res + 1;
   const h = (r.h - 1) * res + 1;
   const data = new Float32Array(w * h);
   const at = (i: number, j: number) => r.data[Math.max(0, Math.min(r.h - 1, j)) * r.w + Math.max(0, Math.min(r.w - 1, i))];
+  const onRamp = (i: number, j: number) => (fixed ? fixed.mask[Math.max(0, Math.min(r.h - 1, j)) * r.w + Math.max(0, Math.min(r.w - 1, i))] : 0);
   const cubic = (p0: number, p1: number, p2: number, p3: number, t: number) =>
     p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
   for (let j = 0; j < h; j++)
@@ -154,7 +221,9 @@ export function importedHeights(r: NonNullable<RenderData["heights"]>, res = 2):
       const slope = Math.abs(at(ix + 1, iy) - at(ix, iy)) + Math.abs(at(ix, iy + 1) - at(ix, iy));
       const px = r.x0 + fx;
       const py = r.y0 + fy;
-      v += (fbm(px * 2.3, py * 2.3) - 0.5) * 0.4 * smooth(0.5, 1.5, slope);
+      // Rock noise on steep parts, but not on ramps, which should stay smooth enough to walk.
+      const ramp = Math.max(onRamp(ix, iy), onRamp(ix + 1, iy), onRamp(ix, iy + 1), onRamp(ix + 1, iy + 1));
+      v += (fbm(px * 2.3, py * 2.3) - 0.5) * 0.4 * smooth(0.5, 1.5, slope) * (1 - ramp);
       data[j * w + i] = v;
     }
   return { x0: r.x0, y0: r.y0, w, h, data, res } as HeightGrid & { res: number };
