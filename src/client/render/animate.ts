@@ -55,6 +55,13 @@ export function partMatrix(out: THREE.Matrix4, a: Asset, part: AssetPart, s: Ani
       const flap = 0.25 + 0.6 * Math.sin(s.t * 6.5 + s.seed);
       return rotateAbout(out, part.pivot, part.anim === "wingL" ? -flap : flap, 0, 0);
     }
+    case "roll": {
+      // Distance / radius: the walk phase advances 2π per model height travelled, and the radius is half the height.
+      const angle = s.phase / Math.PI;
+      // Ease back to the nearest upright pose as it slows down, so it stops face forward.
+      const upright = Math.round(angle / (Math.PI * 2)) * Math.PI * 2;
+      return rotateAbout(out, part.pivot, 0, 0, -(upright + (angle - upright) * Math.min(1, s.moving * 1.5)));
+    }
     case "spin": {
       out.makeRotationY(s.t * 1.1 + s.seed);
       out.setPosition(part.pivot.x, part.pivot.y + Math.sin(s.t * 1.8 + s.seed) * 0.12, part.pivot.z);

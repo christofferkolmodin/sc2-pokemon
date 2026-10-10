@@ -25,11 +25,13 @@ export interface Asset {
   parts: AssetPart[];
   flames: { part: string; p: THREE.Vector3; size: number }[];
   muzzle: THREE.Vector3[];
-  gait: "biped" | "quad" | "fly" | "static";
+  gait: "biped" | "quad" | "fly" | "roll" | "static";
   stride: number;
   /** Bounding radius (tiles) for icons and culling. */
   radius: number;
   height: number;
+  /** Where carried minerals or gas are held, if the model sets it. */
+  carry?: THREE.Vector3;
 }
 
 const cache = new Map<string, Asset>();
@@ -156,6 +158,7 @@ function pokemonAsset(key: string): Asset {
     parts,
     flames: def.flames.map((f) => ({ part: f.part, p: new THREE.Vector3(...f.p), size: f.size })),
     muzzle: def.muzzle.map((m) => new THREE.Vector3(...m)),
+    carry: def.carry ? new THREE.Vector3(...def.carry) : undefined,
     gait: def.gait,
     stride: def.stride,
     radius,

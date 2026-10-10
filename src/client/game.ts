@@ -1,7 +1,7 @@
 import { FP, TICK_MS } from "../sim/fixed.ts";
 import { type Command, MODE_ATTACK, MODE_ATTACK_UNIT, MODE_GATHER, MODE_MOVE, MODE_PATROL, MODE_RETURN, type Turn } from "../sim/commands.ts";
 import { footprintFree } from "../sim/map.ts";
-import { KINDS, K_CENTER, K_EXTRACTOR, K_GEYSER, K_MINERAL, K_PIKACHU } from "../sim/units.ts";
+import { KINDS, K_CENTER, K_EXTRACTOR, K_GEYSER, K_MINERAL } from "../sim/units.ts";
 import { type SimEvent, type Unit, World, type WorldOptions } from "../sim/world.ts";
 import { HASH_INTERVAL, type Replay, ReplayRecorder } from "../sim/replay.ts";
 import type { RenderData } from "../maps/load.ts";
@@ -13,7 +13,7 @@ import { Minimap } from "./minimap.ts";
 import { Selection } from "./selection.ts";
 import { Pointer, type PointerEvt } from "./pointer.ts";
 import { Hud } from "./hud.ts";
-import { Audio } from "./audio.ts";
+import { Audio, type CryMood } from "./audio.ts";
 import { NetSource, ReplaySource, type TurnSource } from "./sources.ts";
 import { SELECT_ENEMY, SELECT_NEUTRAL, SELECT_OWN } from "./style.ts";
 
@@ -80,6 +80,8 @@ export class Game {
   readonly names: Record<number, string>;
   readonly root: HTMLElement;
   readonly bots: Bot[];
+  /** Fast-forwarding through turns that piled up (rejoining a running game): quiet, no AI thinking. */
+  private catchingUp = false;
 
   targeting: Targeting = null;
   placing: number | null = null;
@@ -130,6 +132,7 @@ export class Game {
     this.pointer = new Pointer(s.root, s.root.querySelector("#minimap")!);
     this.bots = s.bots.map((b) => new Bot(this.world, b.id, b.difficulty));
     this.hud = new Hud(this);
+    void this.audio.loadClips(); // your own cries from assets-private/sounds, if any
 
     if (this.source instanceof ReplaySource) {
       this.replayHashes = new Map(this.source.replay.hashes);
@@ -146,7 +149,16 @@ export class Game {
         this.hud.banner(`Desync at tick ${tick}. The simulations diverged (${list}). Save the replay and keep it for debugging.`);
       };
       src.onLeft = (name) => this.hud.toast(`${name} left the game`);
-      src.onClosed = () => this.hud.banner("Disconnected from the server.");
+      src.onRejoined = (name) => this.hud.toast(`${name} is back in the game`);
+      src.onClosed = (retrying) => this.hud.banner(retrying ? "Connection lost. Reconnecting…" : "Disconnected from the server. Go back to the lobby and press Join room to rejoin.");
+      src.onReconnected = () => {
+        this.hud.hideBanner();
+        this.hud.toast("Reconnected");
+      };
+      // The host left: this machine now runs the computer players.
+      src.onHost = (ai) => {
+        for (const a of ai) if (!this.bots.some((b) => b.pid === a.id)) this.bots.push(new Bot(this.world, a.id, a.difficulty));
+      };
       src.onChat = (from, name, text) => this.hud.chatLine(name, text, from);
       src.onPing = (from, x, y) => {
         if (this.me === -1 || this.world.allied(from, this.me)) {
@@ -163,6 +175,7 @@ export class Game {
     window.addEventListener("keyup", this.keyUp);
     window.addEventListener("blur", this.blur);
     window.addEventListener("resize", this.onResize);
+    this.guardNavigation(true);
 
     this.resize();
     // Start looking at our own base.
@@ -204,7 +217,43 @@ export class Game {
     window.removeEventListener("keyup", this.keyUp);
     window.removeEventListener("blur", this.blur);
     window.removeEventListener("resize", this.onResize);
+    this.guardNavigation(false);
   }
+
+  /**
+   * Don't let a stray click throw you out of a game: the mouse's back/forward
+   * side buttons do nothing, the browser's Back stays on the game, and closing
+   * or leaving the tab asks first. (Leave through Menu → Leave game.)
+   */
+  private guardNavigation(on: boolean) {
+    const add = on ? window.addEventListener.bind(window) : window.removeEventListener.bind(window);
+    add("mouseup", this.blockSideButtons, true);
+    add("mousedown", this.blockSideButtons, true);
+    add("auxclick", this.blockSideButtons, true);
+    add("beforeunload", this.confirmLeave);
+    add("popstate", this.stayOnBack);
+    // An extra history entry, so Back lands on it (and is caught) instead of leaving the site.
+    if (on && this.source.kind !== "replay") history.pushState({ game: true }, "");
+  }
+
+  private blockSideButtons = (e: MouseEvent) => {
+    if (e.button === 3 || e.button === 4) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  private confirmLeave = (e: BeforeUnloadEvent) => {
+    if (this.source.kind === "replay" || this.over) return;
+    e.preventDefault();
+    e.returnValue = "";
+  };
+
+  private stayOnBack = () => {
+    if (this.source.kind === "replay" || this.over) return;
+    history.pushState({ game: true }, "");
+    this.hud.toast("Use Menu → Leave game to leave the match");
+  };
 
   // ------------------------------------------------------------------- loop
 
@@ -215,7 +264,8 @@ export class Game {
     this.recorder.record(turn, this.world);
     this.handleEvents(this.world.events);
     // Computer players think after each tick; their commands run next tick, like a human's.
-    if (this.source.kind !== "replay") for (const b of this.bots) for (const c of b.think()) this.source.sendAs(b.pid, c);
+    // Not while fast-forwarding: those ticks are history, the commands would land in the present.
+    if (this.source.kind !== "replay" && !this.catchingUp) for (const b of this.bots) for (const c of b.think()) this.source.sendAs(b.pid, c);
     if (this.world.tick % HASH_INTERVAL === 0) {
       if (this.source instanceof NetSource) this.source.sendHash(this.world.tick, this.world.hash());
       if (this.replayHashes) {
@@ -258,13 +308,27 @@ export class Game {
         break;
       }
     }
-    // Multiplayer: if turns piled up (tab was in background, hiccup), catch up quickly.
+    // Multiplayer: if turns piled up (tab in the background, a hiccup, or rejoining a running
+    // game), catch up quickly. A long backlog runs in time-limited chunks, silently, with progress.
     if (this.source.kind === "net") {
-      let extra = this.source.buffered() - 3;
-      while (extra-- > 0) {
+      const backlog = this.source.buffered();
+      if (backlog > 60 && !this.catchingUp) {
+        this.catchingUp = true;
+        this.audio.muted = true;
+      }
+      const budget = performance.now() + 30;
+      while (this.source.buffered() > 3 && performance.now() < budget) {
         const turn = this.source.next(this.world.tick + 1);
         if (!turn) break;
         this.stepTurn(turn);
+      }
+      if (this.catchingUp) {
+        const left = this.source.buffered();
+        if (left <= 3) {
+          this.catchingUp = false;
+          this.audio.muted = false;
+          this.hud.hideBanner();
+        } else this.hud.banner(`Catching up with the game… ${Math.round((this.world.tick / (this.world.tick + left)) * 100)}%`);
       }
     }
     this.alpha = Math.max(0, Math.min(1, this.acc / TICK_MS));
@@ -383,7 +447,7 @@ export class Game {
     this.send({ t: "move", ids, x: Math.round(wx * FP), y: Math.round(wy * FP), q: queue, mode });
     // Instant local feedback: the units start moving ~1 turn later, but the click registers now.
     this.marker(wx, wy, mode === MODE_ATTACK ? SELECT_ENEMY : mode === MODE_PATROL ? SELECT_NEUTRAL : SELECT_OWN);
-    this.cry(ids);
+    this.cry(ids, mode === MODE_ATTACK ? "attack" : "move");
   }
 
   issueStop(hold: boolean) {
@@ -392,9 +456,9 @@ export class Game {
     this.send({ t: hold ? "hold" : "stop", ids });
   }
 
-  private cry(ids: number[]) {
+  private cry(ids: number[], mood: CryMood) {
     const u = this.world.byId.get(ids[0]);
-    if (u) this.audio.cry(u.kind);
+    if (u) this.audio.cry(u.kind, mood);
   }
 
   /** SC2 smart command (right click). */
@@ -415,7 +479,7 @@ export class Game {
       if (enemy || tk.resource === 3) {
         this.send({ t: "target", ids: movers.map((u) => u.id), id: target.id, q: queue, mode: MODE_ATTACK_UNIT });
         this.marker(target.x / FP, target.y / FP, SELECT_ENEMY);
-        this.cry(movers.map((u) => u.id));
+        this.cry(movers.map((u) => u.id), "attack");
         return;
       }
       const workers = movers.filter((u) => KINDS[u.kind].worker);
@@ -426,6 +490,7 @@ export class Game {
         this.send({ t: "target", ids: workers.map((u) => u.id), id: target.id, q: queue, mode: gatherable ? MODE_GATHER : MODE_RETURN });
         if (others.length) this.send({ t: "move", ids: others.map((u) => u.id), x: target.x, y: target.y, q: queue, mode: MODE_MOVE });
         this.marker(target.x / FP, target.y / FP, SELECT_OWN);
+        this.cry(workers.map((u) => u.id), "move");
         return;
       }
       if (target.kind === K_GEYSER) {
@@ -445,6 +510,11 @@ export class Game {
 
   startPlacing(kind: number) {
     if (!this.canCommand) return;
+    // Like SC2: if you can't afford it there's no placement ghost, just the advisor.
+    const pl = this.world.players.get(this.me);
+    const k = KINDS[kind];
+    if (pl && pl.m < k.m) return this.hud.simError("minerals");
+    if (pl && pl.g < k.g) return this.hud.simError("gas");
     this.placing = kind;
     this.targeting = null;
   }
@@ -462,6 +532,7 @@ export class Game {
       if (target && (target.owner !== 0 || KINDS[target.kind].resource === 3) && !this.selection.ids.every((id) => id === target.id)) {
         this.send({ t: "target", ids: this.movers(), id: target.id, q: shift, mode: MODE_ATTACK_UNIT });
         this.marker(target.x / FP, target.y / FP, SELECT_ENEMY);
+        this.cry(this.movers(), "attack");
       } else this.issueMove(MODE_ATTACK, wx, wy, shift);
     } else if (t === "patrol") this.issueMove(MODE_PATROL, wx, wy, shift);
     else if (t === "rally") {
@@ -641,7 +712,7 @@ export class Game {
       this.subgroup = 0;
       this.cardMode = "main";
       const first = this.world.byId.get(sel.ids[0]);
-      if (first && sel.isMine(first) && !KINDS[first.kind].structure) this.audio.cry(first.kind);
+      if (first && sel.isMine(first) && !KINDS[first.kind].structure) this.audio.cry(first.kind, "select");
     }
   }
 
@@ -818,7 +889,7 @@ export class Game {
 
   private handleEvents(events: SimEvent[]) {
     const now = performance.now();
-    this.renderer.onEvents(events, now);
+    if (!this.catchingUp) this.renderer.onEvents(events, now);
     const w = this.world;
     for (const e of events) {
       switch (e.e) {
@@ -828,13 +899,13 @@ export class Game {
           break;
         }
         case "hit":
-          this.audio.hit(this.near(e.x / FP, e.y / FP) * 0.6);
+          this.audio.hit(this.near(e.x / FP, e.y / FP) * 0.6, KINDS[e.kind].weapon?.fx);
           break;
         case "death": {
           const k = KINDS[e.kind];
           const n = this.near(e.x / FP, e.y / FP);
           if (k.structure && !k.resource) this.audio.explosion(n);
-          else if (!k.resource) this.audio.faint(n);
+          else if (!k.resource) this.audio.faint(n, e.kind, e.owner === this.me);
           break;
         }
         case "error":
@@ -853,7 +924,7 @@ export class Game {
           const base = u && (KINDS[u.kind].structure || KINDS[u.kind].worker);
           if (now - this.lastAlertSay > 8000) {
             this.lastAlertSay = now;
-            this.audio.say(base ? "Your base is under attack" : "Your forces are under attack", 8000);
+            this.audio.say(base ? "baseAttack" : "unitsAttack", 8000);
           }
           this.hud.toast(base ? "Your base is under attack" : "Your forces are under attack", "#ff6a5c");
           break;
@@ -876,13 +947,15 @@ export class Game {
           break;
         case "research":
           if (e.owner === this.me) {
-            this.audio.say("Research complete");
+            this.audio.say("research");
             this.hud.toast(`${["Attack", "Defense"][e.up]} level ${e.lvl} complete`);
           }
           break;
         case "defeat":
           if (e.p === this.me) {
             this.over = "defeat";
+            // Defeated players watch the rest of the game with the whole map revealed.
+            this.fog = false;
             this.hud.gameOver(false);
           } else this.hud.toast(`${this.names[e.p] ?? "A player"} has been defeated`);
           break;
@@ -914,4 +987,3 @@ export class Game {
   }
 }
 
-void K_PIKACHU;

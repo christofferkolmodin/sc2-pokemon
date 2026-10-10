@@ -13,7 +13,10 @@
     "start": "node tools/build.mjs && tsx src/server/main.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "import-maps": "python tools/import-sc2maps.py"
+    "import-maps": "python tools/import-sc2maps.py",
+    "fetch-cries": "tsx tools/fetch-cries.ts",
+    "fetch-anime-cries": "tsx tools/fetch-anime-cries.ts",
+    "gen-advisor": "tsx tools/gen-advisor.ts"
   },
   "dependencies": {
     "three": "^0.170.0",

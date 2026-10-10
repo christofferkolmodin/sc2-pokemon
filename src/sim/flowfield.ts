@@ -95,6 +95,17 @@ function compute(map: GameMap, dist: Int32Array, goal: number, req: number) {
   }
 }
 
+/** Is any tile within `r` tiles of (tx, ty) on the field? */
+export function nearField(map: GameMap, field: FlowField, tx: number, ty: number, r: number): boolean {
+  for (let dy = -r; dy <= r; dy++)
+    for (let dx = -r; dx <= r; dx++) {
+      const x = tx + dx;
+      const y = ty + dy;
+      if (x >= 0 && y >= 0 && x < map.w && y < map.h && field.dist[y * map.w + x] < UNREACHABLE) return true;
+    }
+  return false;
+}
+
 /** Nearest tile passable for clearance `req` to (tx, ty), searching outward in rings. Deterministic. */
 export function nearestPassableTile(map: GameMap, tx: number, ty: number, req: number): number {
   if (isPassable(map, tx, ty, req)) return ty * map.w + tx;
@@ -135,6 +146,8 @@ export function clearPath(map: GameMap, ax: number, ay: number, bx: number, by: 
 }
 
 const LOOKAHEAD = 12;
+/** How far (tiles) a unit pushed off its field looks for a way back on. */
+const RESCUE_RADIUS = 4;
 
 /**
  * Where should a unit at (x,y) steer next? Follows the field downhill for a few
@@ -156,17 +169,23 @@ export function steerTarget(
   const ty = fdiv(y, FP);
   let cur = ty * w + tx;
   if (!isPassable(map, tx, ty, req) || field.dist[cur] >= UNREACHABLE) {
-    // Pushed into a wall or onto an unreachable tile: find a neighbour that is on the field.
+    // Pushed into a wall or into a pocket the field can't reach (crowds shove big units
+    // around): head for the nearest tile that is on the field, searching outward ring by ring.
     let best = -1;
-    let bestD = UNREACHABLE;
-    for (let k = 0; k < 8; k++) {
-      const nx = tx + DX[k];
-      const ny = ty + DY[k];
-      if (!isPassable(map, nx, ny, req)) continue;
-      const n = ny * w + nx;
-      if (field.dist[n] < bestD) {
-        bestD = field.dist[n];
-        best = n;
+    for (let rr = 1; rr <= RESCUE_RADIUS && best < 0; rr++) {
+      let bestD = UNREACHABLE;
+      for (let dy = -rr; dy <= rr; dy++) {
+        for (let dx = -rr; dx <= rr; dx++) {
+          if (abs(dx) !== rr && abs(dy) !== rr) continue;
+          const nx = tx + dx;
+          const ny = ty + dy;
+          if (!isPassable(map, nx, ny, req)) continue;
+          const n = ny * w + nx;
+          if (field.dist[n] < bestD) {
+            bestD = field.dist[n];
+            best = n;
+          }
+        }
       }
     }
     if (best < 0) return false;

@@ -3,10 +3,62 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SC2 Pokémon models</title>
-  <style>html, body { margin: 0; height: 100%; overflow: hidden; background: #111; }</style>
+  <title>Pokédex · PokéCraft</title>
+  <meta name="theme-color" content="#0b0f14">
+  <link rel="icon" href="img/lightning.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap">
+  <style>
+    :root { --bg: #0b0f14; --s1: #11161d; --s2: #161d26; --s3: #1d2631; --line: rgba(200, 220, 255, .08); --text: #e9eef3; --muted: #8b97a4; --dim: #5f6b78; --accent: #f5c542; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 15px/1.5 Outfit, "Segoe UI", system-ui, sans-serif; }
+    /* One WebGL canvas behind the page draws every card's model through its transparent stage. */
+    .dex-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 1; }
+    body.dex-only { overflow: hidden; }
+    body.dex-only .dex-page { display: none; }
+    .dex-page { width: min(1280px, 100% - 32px); margin: 0 auto; padding: 24px 0 64px; }
+    .dex-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+    .dex-top h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+    .dex-top h1 span { color: var(--accent); }
+    .dex-top a { color: var(--muted); text-decoration: none; font-weight: 500; padding: 8px 12px; border-radius: 8px; }
+    .dex-top a:hover { color: var(--text); background: var(--s2); }
+    .dex-lead { margin: 0 0 8px; color: var(--muted); }
+    .dex-section { margin-top: 32px; }
+    .dex-section h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 14px; font-size: 20px; font-weight: 700; }
+    .dex-section h2 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--fc); box-shadow: 0 0 12px var(--fc); align-self: center; }
+    .dex-section h2 small { color: var(--muted); font-size: 13px; font-weight: 400; }
+    .dex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
+    .dex-card { border-radius: 14px; background: var(--s1); border: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column; }
+    .dex-card:hover { border-color: rgba(200, 220, 255, .18); }
+    .dex-stage { height: 190px; background: radial-gradient(120px 90px at 50% 70%, color-mix(in srgb, var(--fc) 22%, transparent), transparent 70%), linear-gradient(#1a222c, #121820); }
+    .dex-info { position: relative; z-index: 2; padding: 12px 14px 14px; border-top: 1px solid var(--line); background: var(--s1); flex: 1; }
+    .dex-info h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+    .dex-info .tag { flex: none; padding: 1px 8px; border-radius: 6px; background: var(--s3); color: var(--muted); font-size: 12px; font-weight: 600; }
+    .dex-types { display: flex; gap: 6px; margin-bottom: 8px; }
+    .ty { font-style: normal; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 99px; color: #10141a; }
+    .ty-fire { background: #f0803a; } .ty-water { background: #5aa8f2; } .ty-grass { background: #5ec46f; } .ty-electric { background: #f5c542; }
+    .ty-flying { background: #a9b8f0; } .ty-poison { background: #b07ad8; } .ty-normal { background: #c4c0b0; }
+    .dex-stats { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 13px; }
+    .dex-stats dt { color: var(--dim); }
+    .dex-stats dd { margin: 0; color: var(--text); text-align: right; overflow-wrap: anywhere; }
+    .dex-note { margin: 0; color: var(--muted); font-size: 13px; }
+    @media (max-width: 560px) {
+      .dex-page { width: calc(100% - 24px); }
+      .dex-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .dex-stage { height: 150px; }
+    }
+  </style>
 </head>
 <body>
+  <div class="dex-page">
+    <header class="dex-top">
+      <h1>Poké<span>dex</span></h1>
+      <a href="/">← Back to the lobby</a>
+    </header>
+    <p class="dex-lead">Every Pokémon and building in PokéCraft, with what it does in a match.</p>
+    <main id="dex"></main>
+  </div>
   <script type="module" src="viewer.js"></script>
 </body>
 </html>

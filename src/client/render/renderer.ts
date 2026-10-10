@@ -98,6 +98,8 @@ interface ProjVis {
   sh: number;
   d0: number;
   fx: WeaponFx;
+  /** Seconds since launch (Razor Leaf spin). */
+  age: number;
 }
 
 const LIGHT_DIR = new THREE.Vector3(-0.45, 0.82, 0.36).normalize();
@@ -120,6 +122,8 @@ export class Renderer {
   readonly effects = new Effects();
   markers: Marker[] = [];
   private overlay: CanvasRenderingContext2D;
+  /** Topmost layer for the locked (fullscreen) cursor, so it shows over the HUD panels too. */
+  private cursorLayer = document.getElementById("cursor-layer") as HTMLCanvasElement | null;
   private dpr = 1;
   private sun: THREE.DirectionalLight;
   private matUnit = unitMaterial(false);
@@ -130,6 +134,11 @@ export class Renderer {
   private ghost = new THREE.Group();
   private ghostKind = -1;
   private ghostMat = new THREE.MeshStandardMaterial({ color: "#7fe0ff", transparent: true, opacity: 0.5, roughness: 0.4, emissive: "#3070a0", depthWrite: false });
+  /** Buildings your workers are on their way to build (queued build orders), as faint ghosts. */
+  private queued = new THREE.Group();
+  private queuedPool: { group: THREE.Group; kind: number }[] = [];
+  private queuedMat = new THREE.MeshStandardMaterial({ color: "#7fe0ff", transparent: true, opacity: 0.22, roughness: 0.4, emissive: "#205080", depthWrite: false });
+  private queuedTiles: Batch;
   private vis = new Map<number, Vis>();
   private snapshots = new Map<number, Snapshot>();
   private corpses: Corpse[] = [];
@@ -173,7 +182,7 @@ export class Renderer {
     cam.ground = (x, y) => this.heights.at(x, y);
 
     this.scene.background = new THREE.Color("#0b0e10");
-    this.scene.add(this.mapGroup, this.unitGroup, this.effects.group, this.ghost);
+    this.scene.add(this.mapGroup, this.unitGroup, this.effects.group, this.ghost, this.queued);
     if (gltf) {
       this.gltfUnits = new GltfUnits(gltf);
       this.scene.add(this.gltfUnits.group);
@@ -208,6 +217,9 @@ export class Renderer {
     this.tileBatch = new Batch(tile, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.45, depthWrite: false, toneMapped: false }), this.scene, 32, false);
     this.tileBatch.mesh.renderOrder = 6;
     this.ghost.renderOrder = 7;
+    this.queuedTiles = new Batch(tile, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.3, depthWrite: false, toneMapped: false }), this.scene, 32, false);
+    this.queuedTiles.mesh.renderOrder = 6;
+    this.queued.renderOrder = 7;
   }
 
   heightAt(x: number, y: number): number {
@@ -376,6 +388,12 @@ export class Renderer {
     this.overlayCanvas.height = Math.round(h * this.dpr);
     this.overlayCanvas.style.width = `${w}px`;
     this.overlayCanvas.style.height = `${h}px`;
+    if (this.cursorLayer) {
+      this.cursorLayer.width = Math.round(w * this.dpr);
+      this.cursorLayer.height = Math.round(h * this.dpr);
+      this.cursorLayer.style.width = `${w}px`;
+      this.cursorLayer.style.height = `${h}px`;
+    }
     this.effects.setScale((h * scale) / 2 / Math.tan(this.cam.fov / 2));
     const sm = this.quality === "low" ? 1024 : 2048;
     if (this.sun.shadow.mapSize.x !== sm) {
@@ -496,7 +514,8 @@ export class Renderer {
         if (vis) this.snapshots.set(u.id, { kind: u.kind, owner: u.owner, x: p.x, y: p.y, tx: u.tx, ty: u.ty, progress: u.progress / Math.max(1, k.time) });
         else continue; // drawn from its snapshot below
       } else if (k.structure && u.owner === 0) {
-        if (!this.explored(Math.floor(p.x), Math.floor(p.y))) continue;
+        // Like SC2, minerals and geysers show (faded) even where you haven't scouted.
+        if (k.resource !== 1 && k.resource !== 2 && !this.explored(Math.floor(p.x), Math.floor(p.y))) continue;
       } else if (!vis) continue;
       if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) continue;
       seenIds.add(u.id);
@@ -525,6 +544,7 @@ export class Renderer {
     this.drawRings(state);
     this.ringBatch.end();
     this.drawPlacement(state.placement);
+    this.drawQueued(state);
     this.effects.update(dt, this.camera.position);
     this.updateSun();
     if (this.composer) this.composer.render();
@@ -551,6 +571,17 @@ export class Renderer {
     const e = w.explored.get(team);
     if (!v || !e) return;
     for (let i = 0; i < this.fogData.length; i++) this.fogData[i] = v[i] ? 255 : e[i] ? 128 : 0;
+    // Lift unexplored fog under minerals and geysers so they read as faded, not black.
+    const m = w.map;
+    for (const u of w.units) {
+      const k = KINDS[u.kind];
+      if ((k.resource !== 1 && k.resource !== 2) || u.hidden) continue;
+      for (let y = u.ty; y < u.ty + k.h; y++)
+        for (let x = u.tx; x < u.tx + k.w; x++) {
+          const i = y * m.w + x;
+          if (x >= 0 && y >= 0 && x < m.w && y < m.h && this.fogData[i] < 96) this.fogData[i] = 96;
+        }
+    }
     this.fogTex.needsUpdate = true;
   }
 
@@ -658,7 +689,8 @@ export class Renderer {
   /** Minerals or gas held in front of a worker's belly on the way back to the Pokémon Center. */
   private drawCarry(u: Unit, model: THREE.Matrix4, asset: Asset) {
     const h = asset.height;
-    tmpL.makeTranslation(0.21 * (h / 0.8), 0.37 * (h / 0.8), 0);
+    if (asset.carry) tmpL.makeTranslation(asset.carry.x, asset.carry.y, asset.carry.z);
+    else tmpL.makeTranslation(0.21 * (h / 0.8), 0.37 * (h / 0.8), 0);
     tmpW.multiplyMatrices(model, tmpL);
     const geo = carryGeometry(u.carryGas);
     this.batch(u.carryGas ? "carry:gas" : "carry:mineral", geo, this.matUnit).push(tmpW, 1, 1, 1);
@@ -739,16 +771,23 @@ export class Renderer {
           sy = m.z;
           sh = m.y;
         }
-        v = { sx, sy, sh, d0: Math.max(0.1, Math.hypot(p.tx / FP - sx, p.ty / FP - sy)), fx };
+        v = { sx, sy, sh, d0: Math.max(0.1, Math.hypot(p.tx / FP - sx, p.ty / FP - sy)), fx, age: 0 };
         this.proj.set(p.id, v);
+        // Streams pour from the mouth to the target for the whole flight.
+        if ((fx === "flame" || fx === "water" || fx === "hydro" || fx === "bubble") && this.seen(sx, sy)) {
+          const tiles = (KINDS[p.kind].weapon!.speed * 22.4) / FP;
+          const to = new THREE.Vector3(p.tx / FP, this.projHeight(p.target, p.air, p.tx / FP, p.ty / FP), p.ty / FP);
+          this.effects.jet(fx, new THREE.Vector3(sx, sh, sy), to, v.d0 / Math.max(1, tiles));
+        }
       }
+      v.age += dt;
       if (!this.seen(x, y)) continue;
       const rem = Math.hypot(p.tx / FP - x, p.ty / FP - y);
       const prog = Math.max(0, Math.min(1, 1 - rem / v.d0));
       const th = this.projHeight(p.target, p.air, p.tx / FP, p.ty / FP);
       const arc = v.fx === "hydro" || v.fx === "leaf" ? Math.sin(prog * Math.PI) * 0.5 : 0;
       const h = v.sh + (th - v.sh) * prog + arc;
-      this.effects.trail(v.fx, new THREE.Vector3(x, h, y), dt);
+      this.effects.trail(v.fx, new THREE.Vector3(x, h, y), dt, v.age + p.id);
     }
     for (const id of this.proj.keys()) if (!live.has(id)) this.proj.delete(id);
   }
@@ -775,6 +814,14 @@ export class Renderer {
     const w = this.world;
     for (const e of events) {
       switch (e.e) {
+        case "attack": {
+          // Wind-up at the mouth until the attack lands (Solar Beam gathers light, cheeks spark…).
+          const u = w.byId.get(e.id);
+          const wpn = u ? KINDS[u.kind].weapon : null;
+          if (!u || !wpn || KINDS[u.kind].structure || !this.seen(u.x / FP, u.y / FP)) break;
+          this.effects.charge(wpn.fx, this.muzzle(u), wpn.point / 22.4);
+          break;
+        }
         case "hit": {
           const k = KINDS[e.kind];
           const wpn = k.weapon!;
@@ -887,6 +934,50 @@ export class Renderer {
     this.ghostMat.emissive.set(pl.ok ? "#205080" : "#802010");
   }
 
+  /**
+   * Like SC2: every building your workers have been told to build but haven't
+   * started yet (including shift-queued ones) shows on the ground as a faint,
+   * gently pulsing footprint and see-through model, until construction begins.
+   */
+  private drawQueued(state: FrameState) {
+    this.queuedTiles.begin();
+    let n = 0;
+    const pulse = 0.75 + 0.25 * Math.sin(state.now / 260);
+    for (const u of this.world.units) {
+      if (!KINDS[u.kind].worker || !state.selection.isMine(u)) continue;
+      for (const o of u.orders) {
+        if (o.mode !== MODE_BUILD) continue;
+        const k = KINDS[o.kind];
+        for (let j = 0; j < k.h; j++)
+          for (let i = 0; i < k.w; i++) {
+            const x = o.tx + i + 0.5;
+            const y = o.ty + j + 0.5;
+            tmpM.makeTranslation(x, this.heights.at(x, y) + 0.07, y);
+            this.queuedTiles.push(tmpM, 0.25 * pulse, 0.75 * pulse, 1.0 * pulse);
+          }
+        let slot = this.queuedPool[n];
+        if (!slot) {
+          slot = { group: new THREE.Group(), kind: -1 };
+          this.queuedPool.push(slot);
+          this.queued.add(slot.group);
+        }
+        if (slot.kind !== o.kind) {
+          slot.group.clear();
+          for (const part of assetFor(o.kind).parts) slot.group.add(new THREE.Mesh(part.geo, this.queuedMat));
+          slot.kind = o.kind;
+        }
+        const cx = o.tx + k.w / 2;
+        const cy = o.ty + k.h / 2;
+        slot.group.position.set(cx, this.heights.at(cx, cy), cy);
+        slot.group.visible = true;
+        n++;
+      }
+    }
+    for (let i = n; i < this.queuedPool.length; i++) this.queuedPool[i].group.visible = false;
+    this.queuedMat.opacity = 0.16 + 0.1 * pulse;
+    this.queuedTiles.end();
+  }
+
   // ---------------------------------------------------------- overlay
 
   private drawOverlay(state: FrameState) {
@@ -907,14 +998,90 @@ export class Renderer {
       ctx.lineWidth = 1;
       ctx.strokeRect(x + 0.5, y + 0.5, Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0));
     }
-    if (state.cursor) this.drawCursor(state.cursor);
+    this.drawCursorLayer(state.cursor);
+  }
+
+  private cursorDrawn = false;
+
+  private drawCursorLayer(c: FrameState["cursor"]) {
+    const ctx = this.cursorLayer?.getContext("2d");
+    if (!ctx) {
+      if (c) this.drawCursor(this.overlay, c);
+      return;
+    }
+    if (!c && !this.cursorDrawn) return;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.clearRect(0, 0, this.cam.w, this.cam.h);
+    this.cursorDrawn = !!c;
+    if (c) this.drawCursor(ctx, c);
   }
 
   /** SC2-style segmented health bars (damaged, selected or hovered units). */
+  /** Unit icons as images for the 2D overlay (production markers over buildings). */
+  private iconImages = new Map<string, HTMLImageElement>();
+  private iconImage(kind: number, owner: number): HTMLImageElement {
+    const key = `${kind}:${owner}`;
+    let img = this.iconImages.get(key);
+    if (!img) {
+      img = new Image();
+      img.src = this.unitIcon(kind, owner, 40);
+      this.iconImages.set(key, img);
+    }
+    return img;
+  }
+
+  /** Over your own buildings: what they're training (icon, progress, queue size). */
+  private drawProduction(state: FrameState) {
+    if (state.me < 0) return;
+    const ctx = this.overlay;
+    for (const u of this.world.units) {
+      if (u.owner !== state.me || u.dead || !u.queue.length) continue;
+      const k = KINDS[u.kind];
+      const q = u.queue[0];
+      const p = this.pos(u, state.alpha);
+      const top = this.baseHeight(u, p.x, p.y) + k.height / 1000 + 0.25;
+      const s = this.cam.project(p.x, top, p.y);
+      if (s.x < -40 || s.y < -40 || s.x > this.cam.w + 40 || s.y > this.cam.h - this.cam.consoleH) continue;
+      const size = 28;
+      const x = Math.round(s.x - size / 2);
+      const y = Math.round(s.y - size - 14);
+      ctx.fillStyle = "rgba(5,8,10,0.85)";
+      ctx.fillRect(x - 2, y - 2, size + 4, size + 8);
+      ctx.strokeStyle = "#2f7a3b";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - 1.5, y - 1.5, size + 3, size + 7);
+      if (q.kind >= 0) {
+        const img = this.iconImage(q.kind, u.owner);
+        if (img.complete) ctx.drawImage(img, x, y, size, size);
+      } else {
+        ctx.fillStyle = "#cfe3ec";
+        ctx.font = "15px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(q.up === 0 ? "⚔" : "⛨", x + size / 2, y + size / 2 + 1);
+      }
+      ctx.fillStyle = "rgba(0,0,0,0.8)";
+      ctx.fillRect(x, y + size + 1, size, 3);
+      ctx.fillStyle = "#5ad0ff";
+      ctx.fillRect(x, y + size + 1, size * (q.t / q.total), 3);
+      if (u.queue.length > 1) {
+        ctx.font = "bold 11px ui-monospace, Consolas, monospace";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "top";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#000";
+        ctx.strokeText(String(u.queue.length), x + size + 1, y - 1);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(String(u.queue.length), x + size + 1, y - 1);
+      }
+    }
+  }
+
   private drawBars(state: FrameState) {
     const ctx = this.overlay;
     const sel = new Set(state.selection.ids);
     const w = this.world;
+    this.drawProduction(state);
     for (const u of w.units) {
       const k = KINDS[u.kind];
       if (u.hidden || (k.resource && k.resource !== 3)) continue;
@@ -1048,8 +1215,7 @@ export class Renderer {
     }
   }
 
-  private drawCursor(c: NonNullable<FrameState["cursor"]>) {
-    const ctx = this.overlay;
+  private drawCursor(ctx: CanvasRenderingContext2D, c: NonNullable<FrameState["cursor"]>) {
     if (c.targeting) {
       const color = c.targeting === "attack" ? SELECT_ENEMY : c.targeting === "patrol" ? SELECT_NEUTRAL : SELECT_OWN;
       ctx.strokeStyle = color;

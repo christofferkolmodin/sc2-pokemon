@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { FlowField, K_CENTER, K_MINERAL, K_PIKACHU, World, isBlockedTile, registerMap } from "../src/sim/index.ts";
+import { FlowField, K_CENTER, K_MINERAL, K_WORKER, World, isBlockedTile, registerMap } from "../src/sim/index.ts";
 import { type MapIndexEntry, type MapJson, mapFromJson } from "../src/maps/load.ts";
 import { Bot } from "../src/ai/bot.ts";
 
@@ -34,7 +34,7 @@ test("imported maps: start bases are on open ground and workers can reach their 
     for (let t = 0; t < 22 * 40; t++) w.step([]);
     for (const p of w.players.values()) assert.ok(p.stats.mined > 150, `${m.name}: player ${p.id} mined only ${p.stats.mined} in 40 s`);
     for (const u of w.units)
-      if (u.kind === K_PIKACHU) assert.ok(!isBlockedTile(w.map, Math.floor(u.x / 4096), Math.floor(u.y / 4096)), `${m.name}: worker inside a wall`);
+      if (u.kind === K_WORKER) assert.ok(!isBlockedTile(w.map, Math.floor(u.x / 4096), Math.floor(u.y / 4096)), `${m.name}: worker inside a wall`);
     assert.ok(w.units.some((u) => u.kind === K_MINERAL));
   }
 });

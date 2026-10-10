@@ -1,6 +1,6 @@
 import type { Command, PlayerCommand, Turn } from "../sim/commands.ts";
 import { type Replay, ReplayCursor } from "../sim/replay.ts";
-import type { ClientMsg, ServerMsg } from "../net/protocol.ts";
+import type { ClientMsg, Difficulty, ServerMsg } from "../net/protocol.ts";
 
 /**
  * Where turns come from. The game loop asks for the turn for the next tick and
@@ -62,28 +62,86 @@ export class ReplaySource implements TurnSource {
   close() {}
 }
 
-/** Lockstep over WebSocket. Turns arrive from the relay server at 22.4/s. */
+/**
+ * Lockstep over WebSocket. Turns arrive from the relay server at 22.4/s. If the
+ * connection drops mid-game it reconnects by itself and asks only for the turns
+ * it missed; a player who rejoins from the lobby gets every turn so far.
+ */
 export class NetSource implements TurnSource {
   readonly kind = "net";
   private queue: Turn[] = [];
+  /** Highest tick received so far. */
+  private lastTick = 0;
+  private closing = false;
+  private retries = 0;
   rtt = 0;
   private pingTimer: ReturnType<typeof setInterval>;
   onDesync: ((tick: number, hashes: Record<number, number>) => void) | null = null;
   onLeft: ((name: string) => void) | null = null;
-  onClosed: (() => void) | null = null;
+  onRejoined: ((name: string) => void) | null = null;
+  /** The connection dropped; `retrying` is false once it gives up. */
+  onClosed: ((retrying: boolean) => void) | null = null;
+  onReconnected: (() => void) | null = null;
+  onHost: ((ai: { id: number; difficulty: Difficulty }[]) => void) | null = null;
   onChat: ((from: number, name: string, text: string) => void) | null = null;
   onPing: ((from: number, x: number, y: number) => void) | null = null;
 
-  constructor(private ws: WebSocket) {
-    ws.addEventListener("message", (e) => this.onMessage(JSON.parse(String(e.data)) as ServerMsg));
-    ws.addEventListener("close", () => this.onClosed?.());
+  /** `room` and `name` let it reconnect to the same seat after a drop. */
+  constructor(
+    private ws: WebSocket,
+    private rejoin?: { room: string; name: string },
+  ) {
+    this.attach(ws);
     this.pingTimer = setInterval(() => this.raw({ type: "ping", t: performance.now() }), 2000);
+  }
+
+  private attach(ws: WebSocket) {
+    this.ws = ws;
+    ws.addEventListener("message", (e) => this.onMessage(JSON.parse(String(e.data)) as ServerMsg));
+    ws.addEventListener("close", () => {
+      if (this.closing || ws !== this.ws) return;
+      const retrying = !!this.rejoin && this.retries < 30;
+      this.onClosed?.(retrying);
+      if (retrying) setTimeout(() => this.reconnect(), Math.min(5000, 1000 + this.retries * 500));
+    });
+  }
+
+  private reconnect() {
+    if (this.closing || !this.rejoin) return;
+    this.retries++;
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "hello", name: this.rejoin!.name, room: this.rejoin!.room, rejoinFrom: this.lastTick } satisfies ClientMsg)));
+    this.attach(ws);
   }
 
   private onMessage(m: ServerMsg) {
     switch (m.type) {
       case "turn":
+        if (m.tick <= this.lastTick) break;
         this.queue.push({ tick: m.tick, cmds: m.cmds });
+        this.lastTick = m.tick;
+        break;
+      case "catchup": {
+        // Every tick after `from`; only non-empty ones are listed.
+        const byTick = new Map(m.turns.map((t) => [t.tick, t.cmds]));
+        for (let t = Math.max(m.from, this.lastTick) + 1; t <= m.upTo; t++) this.queue.push({ tick: t, cmds: byTick.get(t) ?? [] });
+        this.lastTick = Math.max(this.lastTick, m.upTo);
+        if (this.retries > 0) {
+          this.retries = 0;
+          this.onReconnected?.();
+        }
+        break;
+      }
+      case "rejoined":
+        this.onRejoined?.(m.name);
+        break;
+      case "host":
+        this.onHost?.(m.ai);
+        break;
+      case "error":
+        // A reconnect the server turned down (e.g. the game ended meanwhile): stop trying.
+        if (this.retries > 0) this.retries = 99;
         break;
       case "pong":
         this.rtt = performance.now() - m.t;
@@ -132,6 +190,7 @@ export class NetSource implements TurnSource {
     this.raw({ type: "hash", tick, h });
   }
   close() {
+    this.closing = true;
     clearInterval(this.pingTimer);
     this.ws.close();
   }

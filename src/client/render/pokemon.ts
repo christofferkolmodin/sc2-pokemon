@@ -7,7 +7,7 @@ import type { Prim, V3 } from "./sdf.ts";
  * colour); flames are drawn as glowing sprites at the given points.
  */
 
-export type Anim = "legA" | "legB" | "armA" | "armB" | "tail" | "wingL" | "wingR" | "head" | "body";
+export type Anim = "legA" | "legB" | "armA" | "armB" | "tail" | "wingL" | "wingR" | "head" | "body" | "roll";
 
 export interface PartDef {
   name: string;
@@ -27,10 +27,12 @@ export interface PokeModel {
   flames: { part: string; p: V3; size: number }[];
   /** Where attacks come out (model space). */
   muzzle: V3[];
-  /** Walk style: bipeds bob, quadrupeds trot. */
-  gait: "biped" | "quad" | "fly";
+  /** Walk style: bipeds bob, quadrupeds trot, balls roll. */
+  gait: "biped" | "quad" | "fly" | "roll";
   /** Seconds per stride at full speed (visual only). */
   stride: number;
+  /** Where a worker holds carried minerals or gas (model space); defaults to in front of the belly. */
+  carry?: V3;
 }
 
 // --------------------------------------------------------------- helpers
@@ -40,6 +42,10 @@ const ell = (p: V3, r: V3, c: string, o: Opt = {}): Prim => ({ k: "ell", p, r, c
 const cap = (a: V3, b: V3, r1: number, r2: number, c: string, o: Opt = {}): Prim => ({ k: "cap", p: a, b, r: [r1, r2, 0], c, ...o });
 const tor = (p: V3, R: number, r: number, c: string, o: Opt = {}): Prim => ({ k: "tor", p, r: [R, r, 0], c, ...o });
 const box = (p: V3, r: V3, c: string, o: Opt = {}): Prim => ({ k: "box", p, r, c, round: Math.min(...r) * 0.6, ...o });
+/** Flat plate with any outline: points [along, across] in the plate's plane (before `rot`), half thickness t. */
+const plate = (p: V3, poly: [number, number][], t: number, c: string, o: Opt = {}): Prim => ({ k: "poly", p, r: [t, 0, 0], poly, c, round: t * 0.8, ...o });
+/** Flat trapezoid plate: r = [half thickness, half height, half width at the bottom], `top` = half width at the top. */
+const trap = (p: V3, r: V3, top: number, c: string, o: Opt = {}): Prim => ({ k: "trap", p, r, top, c, round: r[0] * 0.8, ...o });
 
 const z = (v: V3, s: number): V3 => [v[0], v[1], v[2] * s];
 
@@ -83,8 +89,6 @@ function scarf(p: V3, R: number, r: number, tilt = 0): PartDef {
 
 // ------------------------------------------------------------- colours
 
-const YEL = "#f6cf37";
-const BROWN = "#8a5a2b";
 const DARK = "#1c1512";
 const CHAR = "#f08637";
 const CREAM = "#f7d78f";
@@ -103,11 +107,17 @@ const REDEYE = "#c3283a";
 
 // ------------------------------------------------------------- models
 
-const pikachu: PokeModel = {
+// Workers, one per faction. All share the same proportions so carried
+// minerals line up: about 0.8 tall, belly at x ~ 0.2 (Voltorb sets its own carry point).
+
+const GROW = "#ef8a36";
+const GROWFUR = "#f6e4b8";
+
+const growlithe: PokeModel = {
   cell: 0.018,
   gait: "biped",
-  stride: 0.32,
-  muzzle: [[0.2, 0.56, 0]],
+  stride: 0.3,
+  muzzle: [[0.3, 0.56, 0]],
   flames: [],
   parts: [
     {
@@ -115,32 +125,127 @@ const pikachu: PokeModel = {
       anim: "body",
       pivot: [0, 0, 0],
       prims: [
-        ell([0, 0.3, 0], [0.19, 0.23, 0.18], YEL),
-        ell([0.04, 0.6, 0], [0.2, 0.18, 0.21], YEL, { k2: 0.08 }),
-        paint(ell([-0.17, 0.42, 0], [0.08, 0.03, 0.14], BROWN, { rot: [0, 0, 0.35] })),
-        paint(ell([-0.19, 0.31, 0], [0.07, 0.026, 0.13], BROWN, { rot: [0, 0, 0.2] })),
-        paint(ell([0.17, 0.545, 0.14], [0.06, 0.045, 0.045], "#e5423a", { mirror: true })),
-        ...eyes([0.19, 0.645, 0.085], [0.035, 0.05, 0.035], DARK),
-        paint(ell([0.24, 0.6, 0], [0.03, 0.012, 0.016], DARK)),
-        // Ears with black tips.
-        cap([0.0, 0.72, 0.1], [-0.07, 1.0, 0.22], 0.055, 0.03, YEL, { mirror: true, k2: 0.03 }),
-        cap([-0.055, 0.92, 0.185], [-0.075, 1.01, 0.225], 0.047, 0.03, DARK, { mirror: true }),
+        ell([0, 0.3, 0], [0.19, 0.22, 0.18], GROW),
+        // Fluffy cream chest.
+        ell([0.1, 0.36, 0], [0.12, 0.14, 0.13], GROWFUR, { k2: 0.04 }),
+        // Black tiger stripes on the sides.
+        ...([0.2, 0.3] as number[]).map((y) => paint(ell([-0.08, y, 0.16], [0.03, 0.012, 0.05], DARK, { mirror: true, rot: [0, 0, 0.5] }))),
+        ell([0.05, 0.6, 0], [0.19, 0.17, 0.19], GROW, { k2: 0.07 }),
+        ell([0.22, 0.55, 0], [0.09, 0.065, 0.085], GROWFUR, { k2: 0.04 }),
+        paint(ell([0.305, 0.57, 0], [0.025, 0.02, 0.025], DARK)),
+        ...eyes([0.19, 0.65, 0.09], [0.03, 0.045, 0.03], DARK),
+        // Cream tuft on top of the head.
+        ell([0.0, 0.76, 0], [0.11, 0.06, 0.09], GROWFUR, { k2: 0.04 }),
+        ell([-0.02, 0.77, 0.13], [0.05, 0.08, 0.05], GROW, { mirror: true, rot: [0.45, 0, 0], k2: 0.03 }),
+        paint(ell([0.02, 0.77, 0.13], [0.03, 0.05, 0.035], DARK, { mirror: true, rot: [0.45, 0, 0] })),
       ],
     },
-    ...pair("arm", [cap([0.1, 0.4, 0.14], [0.2, 0.32, 0.16], 0.045, 0.04, YEL)], [0.1, 0.4, 0.14], "armA", "armB"),
-    ...pair("leg", [ell([0.05, 0.05, 0.1], [0.09, 0.05, 0.06], YEL), cap([0.0, 0.16, 0.09], [0.03, 0.06, 0.1], 0.06, 0.05, YEL)], [0.0, 0.18, 0.09], "legA", "legB"),
+    ...pair("arm", [cap([0.1, 0.4, 0.14], [0.2, 0.32, 0.16], 0.045, 0.04, GROW)], [0.1, 0.4, 0.14], "armA", "armB"),
+    ...pair("leg", [ell([0.05, 0.05, 0.1], [0.09, 0.05, 0.06], GROW), cap([0.0, 0.16, 0.09], [0.03, 0.06, 0.1], 0.06, 0.05, GROW)], [0.0, 0.18, 0.09], "legA", "legB"),
     {
+      // Big fluffy cream tail.
       name: "tail",
       anim: "tail",
-      pivot: [-0.16, 0.2, 0],
-      prims: [
-        box([-0.24, 0.28, 0], [0.03, 0.1, 0.018], BROWN, { rot: [0, 0, 0.7] }),
-        box([-0.3, 0.43, 0], [0.035, 0.12, 0.018], YEL, { rot: [0, 0, -0.55], k2: 0.01 }),
-        box([-0.38, 0.6, 0], [0.11, 0.08, 0.018], YEL, { rot: [0, 0, 0.35], k2: 0.01 }),
-      ],
-      cell: 0.012,
+      pivot: [-0.15, 0.22, 0],
+      prims: [cap([-0.15, 0.22, 0], [-0.28, 0.32, 0], 0.04, 0.06, GROWFUR), ell([-0.33, 0.38, 0], [0.08, 0.1, 0.07], GROWFUR, { k2: 0.03 })],
     },
-    scarf([0.02, 0.45, 0], 0.15, 0.032),
+    scarf([0.03, 0.44, 0], 0.15, 0.032),
+  ],
+};
+
+const PSY = "#f4cf55";
+const BILL = "#f3e2b0";
+
+const psyduck: PokeModel = {
+  cell: 0.018,
+  gait: "biped",
+  stride: 0.32,
+  muzzle: [[0.32, 0.53, 0]],
+  flames: [],
+  parts: [
+    {
+      name: "body",
+      anim: "body",
+      pivot: [0, 0, 0],
+      prims: [
+        ell([0, 0.29, 0], [0.18, 0.23, 0.17], PSY),
+        ell([0.05, 0.6, 0], [0.2, 0.17, 0.19], PSY, { k2: 0.07 }),
+        // Wide flat bill.
+        ell([0.24, 0.53, 0], [0.1, 0.035, 0.08], BILL, { k2: 0.02 }),
+        // Blank stare: white eyes with tiny pupils.
+        ...eyes([0.19, 0.65, 0.08], [0.035, 0.045, 0.04], "#fbfbf6", false),
+        paint(ell([0.24, 0.65, 0.08], [0.04, 0.016, 0.016], DARK, { mirror: true })),
+        // Three hairs on top.
+        cap([0.04, 0.74, 0], [0.02, 0.86, 0], 0.012, 0.008, DARK),
+        cap([0.03, 0.74, 0.03], [0.0, 0.84, 0.07], 0.012, 0.008, DARK, { mirror: true }),
+      ],
+    },
+    ...pair("arm", [cap([0.1, 0.4, 0.14], [0.2, 0.32, 0.16], 0.045, 0.04, PSY)], [0.1, 0.4, 0.14], "armA", "armB"),
+    ...pair("leg", [ell([0.07, 0.035, 0.1], [0.11, 0.035, 0.07], BILL), cap([0.0, 0.16, 0.09], [0.03, 0.06, 0.1], 0.06, 0.05, PSY)], [0.0, 0.18, 0.09], "legA", "legB"),
+    { name: "tail", anim: "tail", pivot: [-0.15, 0.2, 0], prims: [ell([-0.18, 0.2, 0], [0.06, 0.04, 0.05], PSY, { rot: [0, 0, 0.4] })] },
+    scarf([0.03, 0.45, 0], 0.15, 0.032),
+  ],
+};
+
+const ODD = "#3f62b0";
+const ODDFOOT = "#2c4688";
+
+const oddish: PokeModel = {
+  cell: 0.012,
+  gait: "biped",
+  stride: 0.26,
+  muzzle: [[0.22, 0.28, 0]],
+  flames: [],
+  parts: [
+    {
+      name: "body",
+      anim: "body",
+      pivot: [0, 0, 0],
+      prims: [
+        ell([0, 0.26, 0], [0.2, 0.2, 0.2], ODD),
+        ...eyes([0.17, 0.3, 0.08], [0.03, 0.04, 0.03], "#d23a3a"),
+        paint(ell([0.2, 0.22, 0], [0.02, 0.008, 0.03], DARK)),
+        // Five broad flat leaves fanning out from the top: tilt outward (x), then turn to face direction a (y).
+        ...[0, 1, 2, 3, 4].map((i) => {
+          const a = (i / 5) * Math.PI * 2 + 0.3;
+          const tilt = 0.75;
+          const half = 0.18;
+          const d: V3 = [Math.cos(a) * Math.sin(tilt), Math.cos(tilt), Math.sin(a) * Math.sin(tilt)];
+          return ell([d[0] * half, 0.4 + d[1] * half, d[2] * half], [0.08, half, 0.02], i % 2 ? LEAF : DLEAF, { rot: [tilt, Math.PI / 2 - a, 0], k2: 0.03 });
+        }),
+      ],
+    },
+    ...pair("leg", [ell([0.05, 0.04, 0.1], [0.08, 0.04, 0.06], ODDFOOT), cap([0.0, 0.12, 0.09], [0.03, 0.05, 0.1], 0.05, 0.045, ODD)], [0.0, 0.14, 0.09], "legA", "legB"),
+    scarf([0.0, 0.14, 0], 0.18, 0.03),
+  ],
+};
+
+const VOLT = "#d8342f";
+
+const voltorb: PokeModel = {
+  cell: 0.018,
+  gait: "roll",
+  stride: 0.3,
+  muzzle: [[0.36, 0.36, 0]],
+  carry: [0.46, 0.3, 0],
+  flames: [],
+  parts: [
+    {
+      // Rolls about its centre while moving, and rights itself (face forward) when it stops.
+      name: "body",
+      anim: "roll",
+      pivot: [0, 0.36, 0],
+      prims: [
+        // A Poké Ball: red top, white bottom, dark seam.
+        ell([0, 0.36, 0], [0.35, 0.35, 0.35], "#f2f2ee"),
+        paint(box([0, 0.6, 0], [0.4, 0.24, 0.4], VOLT, { round: 0 })),
+        paint(box([0, 0.36, 0], [0.4, 0.012, 0.4], DARK, { round: 0 })),
+        // Angry slanted eyes on the red half.
+        paint(ell([0.3, 0.47, 0.11], [0.12, 0.05, 0.07], "#ffffff", { mirror: true, rot: [0.45, 0, 0] })),
+        paint(ell([0.33, 0.46, 0.09], [0.12, 0.03, 0.025], DARK, { mirror: true })),
+      ],
+    },
+    scarf([0, 0.17, 0], 0.32, 0.03),
   ],
 };
 
@@ -441,9 +546,254 @@ const venusaur: PokeModel = {
   ],
 };
 
+// Lightning line: Pichu -> Pikachu -> Raichu.
+
+const YEL = "#f6cf37";
+const BROWN = "#8a5a2b";
+const CHEEK = "#f39aa6";
+const RAI = "#ee9a3a";
+const RAIBELLY = "#f8dfae";
+const RAIEAR = "#7a4a25";
+
+/** Scales a primitive about the origin. */
+function scaled(q: Prim, f: number): Prim {
+  const v = (a: V3): V3 => [a[0] * f, a[1] * f, a[2] * f];
+  return {
+    ...q,
+    p: v(q.p),
+    b: q.b ? v(q.b) : undefined,
+    r: q.k === "cap" || q.k === "tor" ? [q.r[0] * f, q.r[1] * f, 0] : v(q.r),
+    k2: q.k2 !== undefined ? q.k2 * f : undefined,
+    round: q.round !== undefined ? q.round * f : undefined,
+    top: q.top !== undefined ? q.top * f : undefined,
+    corner: q.corner !== undefined ? q.corner * f : undefined,
+    poly: q.poly ? q.poly.map(([a, b]): [number, number] => [a * f, b * f]) : undefined,
+  };
+}
+
+function scaleModel(m: PokeModel, f: number): PokeModel {
+  const v = (a: V3): V3 => [a[0] * f, a[1] * f, a[2] * f];
+  return {
+    ...m,
+    cell: m.cell * f,
+    stride: m.stride * f,
+    muzzle: m.muzzle.map(v),
+    flames: m.flames.map((x) => ({ ...x, p: v(x.p), size: x.size * f })),
+    parts: m.parts.map((p) => ({ ...p, pivot: v(p.pivot), cell: p.cell ? p.cell * f : undefined, prims: p.prims.map((q) => scaled(q, f)) })),
+  };
+}
+
+// Pichu is paler and creamier than Pikachu.
+const PICHU = "#fbe25a";
+
+/**
+ * Pichu's ears, traced from the pixels of the Smash Bros. Ultimate render and
+ * scaled to the model: a narrow stem at the head (about a third of the ear's
+ * full width; the head blend rounds it into a fillet), flaring out quickly just
+ * above it, widest about a quarter to a third of the way up, then a long taper
+ * to the tip. Points are [along, across] in the ear's plane, across > 0 toward
+ * the outer edge; the left ear is mirrored.
+ */
+const PICHU_EAR: [number, number][] = [
+  [0.34, 0], // tip
+  [0.334, -0.013],
+  [0.264, -0.063],
+  [0.189, -0.106],
+  [0.154, -0.123],
+  [0.14, -0.126],
+  [0.015, -0.045], // stem, inner side
+  [-0.03, -0.05],
+  [-0.03, 0.043],
+  [-0.014, 0.046], // stem, outer side
+  [0.03, 0.113],
+  [0.055, 0.141],
+  [0.102, 0.133],
+  [0.166, 0.11],
+  [0.249, 0.064],
+];
+/**
+ * The yellow, traced the same way: it fills the stem and the lower ear and ends
+ * in two points with a notch between them; a thick black band runs down the
+ * inner edge and a thinner one down the outer edge.
+ */
+const PICHU_EAR_YELLOW: [number, number][] = [
+  [0.215, -0.008], // inner point
+  [0.069, -0.079],
+  [0.015, -0.045],
+  [-0.04, -0.051],
+  [-0.04, 0.042],
+  [-0.014, 0.046],
+  [0.011, 0.085],
+  [0.043, 0.093],
+  [0.066, 0.092],
+  [0.111, 0.084],
+  [0.15, 0.072],
+  [0.205, 0.048], // outer point
+  [0.158, 0.02], // notch
+];
+
+function pichuEar(base: V3, tilt: number): Prim[] {
+  const o = { rot: [tilt, 0, 0] as V3, mirror: true };
+  return [
+    plate(base, PICHU_EAR, 0.026, DARK, { ...o, k2: 0.05, corner: 0.006 }),
+    paint(plate(base, PICHU_EAR_YELLOW, 0.08, PICHU, { ...o, round: 0 })),
+  ];
+}
+
+/** Big glossy eyes: dark brown-black with one large highlight up top. */
+function cuteEyes(p: V3, r: V3, iris: string): Prim[] {
+  const d = r[0] * 2.4;
+  return [
+    paint(ell(p, [d, r[1], r[2]], iris, { mirror: true })),
+    paint(ell([p[0], p[1] + r[1] * 0.38, p[2] - r[2] * 0.28], [d, r[1] * 0.38, r[2] * 0.36], "#ffffff", { mirror: true })),
+  ];
+}
+
+const pichu: PokeModel = {
+  cell: 0.011,
+  gait: "biped",
+  stride: 0.2,
+  muzzle: [[0.19, 0.34, 0]],
+  flames: [],
+  parts: [
+    {
+      name: "body",
+      anim: "body",
+      pivot: [0, 0, 0],
+      // Finer mesh so the painted eyes, collar and ear pattern have clean edges.
+      cell: 0.008,
+      prims: [
+        // Baby proportions: a small round body under a big, wide, round head.
+        ell([0, 0.12, 0], [0.11, 0.115, 0.11], PICHU),
+        ell([0.01, 0.355, 0], [0.185, 0.158, 0.21], PICHU, { k2: 0.06 }),
+        // Large eyes set low and wide, soft pink cheeks, a tiny nose and a little smile.
+        ...cuteEyes([0.155, 0.35, 0.088], [0.05, 0.062, 0.05], "#24130f"),
+        paint(ell([0.125, 0.29, 0.15], [0.07, 0.05, 0.056], "#f7a1b0", { mirror: true })),
+        paint(ell([0.19, 0.31, 0], [0.02, 0.007, 0.009], DARK)),
+        // Open, happy mouth with a pink tongue: a dark half-oval (top half painted back to yellow).
+        paint(ell([0.18, 0.282, 0], [0.035, 0.034, 0.04], "#5a2026")),
+        paint(ell([0.188, 0.264, 0], [0.035, 0.015, 0.026], "#f08aa0")),
+        paint(ell([0.18, 0.31, 0], [0.045, 0.02, 0.055], PICHU)),
+        // The black zigzag collar: a band round the neck with short teeth at the front.
+        paint(ell([0.01, 0.2, 0], [0.15, 0.018, 0.15], DARK)),
+        ...[-0.066, -0.022, 0.022, 0.066].map((zz) => paint(trap([0.1, 0.18, zz], [0.08, 0.022, 0.001], 0.02, DARK, { round: 0 }))),
+        ...pichuEar([-0.02, 0.44, 0.16], 0.3),
+      ],
+    },
+    // Stubby arms ending in round paws.
+    ...pair("arm", [cap([0.03, 0.16, 0.09], [0.075, 0.14, 0.15], 0.032, 0.03, PICHU), ell([0.08, 0.137, 0.155], [0.036, 0.034, 0.034], PICHU, { k2: 0.02 })], [0.03, 0.16, 0.09], "armA", "armB"),
+    // Little round feet.
+    ...pair("leg", [ell([0.035, 0.026, 0.06], [0.058, 0.028, 0.042], PICHU), cap([0.0, 0.06, 0.06], [0.015, 0.03, 0.06], 0.038, 0.035, PICHU)], [0.0, 0.07, 0.06], "legA", "legB"),
+    {
+      // Short, flat black tail with a kink.
+      name: "tail",
+      anim: "tail",
+      pivot: [-0.1, 0.08, 0],
+      prims: [
+        box([-0.15, 0.09, 0], [0.045, 0.018, 0.01], DARK, { rot: [0, 0, 0.3] }),
+        box([-0.18, 0.145, 0], [0.018, 0.04, 0.01], DARK, { rot: [0, 0, -0.4], k2: 0.01 }),
+        box([-0.235, 0.185, 0], [0.045, 0.022, 0.01], DARK, { rot: [0, 0, 0.25], k2: 0.01 }),
+      ],
+      cell: 0.008,
+    },
+    // Team colour as a thin belt, so it doesn't hide Pichu's black collar.
+    { name: "band", anim: "body", pivot: [0, 0, 0], team: true, cell: 0.008, prims: [tor([0, 0.075, 0], 0.11, 0.012, "#ffffff")] },
+  ],
+};
+
+const pikachuBase: PokeModel = {
+  cell: 0.018,
+  gait: "biped",
+  stride: 0.32,
+  muzzle: [[0.2, 0.56, 0]],
+  flames: [],
+  parts: [
+    {
+      name: "body",
+      anim: "body",
+      pivot: [0, 0, 0],
+      prims: [
+        ell([0, 0.3, 0], [0.19, 0.23, 0.18], YEL),
+        ell([0.04, 0.6, 0], [0.2, 0.18, 0.21], YEL, { k2: 0.08 }),
+        paint(ell([-0.17, 0.42, 0], [0.08, 0.03, 0.14], BROWN, { rot: [0, 0, 0.35] })),
+        paint(ell([-0.19, 0.31, 0], [0.07, 0.026, 0.13], BROWN, { rot: [0, 0, 0.2] })),
+        paint(ell([0.17, 0.545, 0.14], [0.06, 0.045, 0.045], "#e5423a", { mirror: true })),
+        ...eyes([0.19, 0.645, 0.085], [0.035, 0.05, 0.035], DARK),
+        paint(ell([0.24, 0.6, 0], [0.03, 0.012, 0.016], DARK)),
+        // Ears with black tips.
+        cap([0.0, 0.72, 0.1], [-0.07, 1.0, 0.22], 0.055, 0.03, YEL, { mirror: true, k2: 0.03 }),
+        paint(cap([-0.05, 0.9, 0.18], [-0.08, 1.04, 0.23], 0.065, 0.05, DARK, { mirror: true })),
+      ],
+    },
+    ...pair("arm", [cap([0.1, 0.4, 0.14], [0.2, 0.32, 0.16], 0.045, 0.04, YEL)], [0.1, 0.4, 0.14], "armA", "armB"),
+    ...pair("leg", [ell([0.05, 0.05, 0.1], [0.09, 0.05, 0.06], YEL), cap([0.0, 0.16, 0.09], [0.03, 0.06, 0.1], 0.06, 0.05, YEL)], [0.0, 0.18, 0.09], "legA", "legB"),
+    {
+      name: "tail",
+      anim: "tail",
+      pivot: [-0.16, 0.2, 0],
+      prims: [
+        box([-0.24, 0.28, 0], [0.03, 0.1, 0.018], BROWN, { rot: [0, 0, 0.7] }),
+        box([-0.3, 0.43, 0], [0.035, 0.12, 0.018], YEL, { rot: [0, 0, -0.55], k2: 0.01 }),
+        box([-0.38, 0.6, 0], [0.11, 0.08, 0.018], YEL, { rot: [0, 0, 0.35], k2: 0.01 }),
+      ],
+      cell: 0.012,
+    },
+    scarf([0.02, 0.45, 0], 0.15, 0.032),
+  ],
+};
+const pikachu = scaleModel(pikachuBase, 1.1);
+
+/** Raichu, authored at Pikachu size and scaled up. */
+const raichuBase: PokeModel = {
+  cell: 0.018,
+  gait: "biped",
+  stride: 0.32,
+  muzzle: [[0.22, 0.58, 0]],
+  flames: [],
+  parts: [
+    {
+      name: "body",
+      anim: "body",
+      pivot: [0, 0, 0],
+      prims: [
+        ell([0, 0.31, 0], [0.21, 0.25, 0.2], RAI),
+        paint(ell([0.13, 0.28, 0], [0.12, 0.19, 0.16], RAIBELLY)),
+        ell([0.05, 0.62, 0], [0.19, 0.17, 0.2], RAI, { k2: 0.08 }),
+        paint(ell([0.18, 0.56, 0.14], [0.06, 0.045, 0.045], YEL, { mirror: true })),
+        ...eyes([0.2, 0.66, 0.085], [0.035, 0.05, 0.035], DARK),
+        paint(ell([0.25, 0.615, 0], [0.03, 0.012, 0.016], DARK)),
+        // Long ears, brown outside with a curl at the tip.
+        cap([-0.01, 0.73, 0.1], [-0.12, 0.98, 0.24], 0.065, 0.04, RAIEAR, { mirror: true, k2: 0.03 }),
+        paint(ell([0.0, 0.84, 0.16], [0.03, 0.09, 0.06], YEL, { mirror: true, rot: [0.4, 0, 0.4] })),
+        ell([-0.15, 1.0, 0.25], [0.04, 0.035, 0.035], RAIEAR, { mirror: true, k2: 0.02 }),
+      ],
+    },
+    ...pair("arm", [cap([0.1, 0.42, 0.15], [0.21, 0.33, 0.17], 0.048, 0.042, RAI), paint(ell([0.21, 0.33, 0.17], [0.05, 0.05, 0.05], BROWN))], [0.1, 0.42, 0.15], "armA", "armB"),
+    ...pair("leg", [ell([0.06, 0.05, 0.1], [0.1, 0.05, 0.065], RAI), paint(ell([0.14, 0.05, 0.1], [0.04, 0.06, 0.07], BROWN)), cap([0.0, 0.17, 0.09], [0.03, 0.06, 0.1], 0.065, 0.055, RAI)], [0.0, 0.19, 0.09], "legA", "legB"),
+    {
+      // Long thin black tail ending in a lightning bolt.
+      name: "tail",
+      anim: "tail",
+      pivot: [-0.18, 0.18, 0],
+      prims: [
+        cap([-0.18, 0.18, 0], [-0.42, 0.1, 0], 0.025, 0.02, DARK),
+        cap([-0.42, 0.1, 0], [-0.58, 0.38, 0], 0.02, 0.018, DARK),
+        box([-0.62, 0.48, 0], [0.04, 0.09, 0.018], YEL, { rot: [0, 0, 0.6] }),
+        box([-0.66, 0.6, 0], [0.09, 0.05, 0.018], YEL, { rot: [0, 0, -0.5], k2: 0.01 }),
+      ],
+      cell: 0.012,
+    },
+    scarf([0.03, 0.46, 0], 0.16, 0.034),
+  ],
+};
+const raichu = scaleModel(raichuBase, 1.5);
+
 /** Models by unit kind key. */
 export const POKEMON: Record<string, PokeModel> = {
-  pikachu,
+  growlithe,
+  psyduck,
+  oddish,
+  voltorb,
   charmander,
   charmeleon,
   charizard,
@@ -453,4 +803,7 @@ export const POKEMON: Record<string, PokeModel> = {
   bulbasaur,
   ivysaur,
   venusaur,
+  pichu,
+  pikachu,
+  raichu,
 };

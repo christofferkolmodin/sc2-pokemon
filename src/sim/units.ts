@@ -44,11 +44,13 @@ export function typeMult(atk: number, def: readonly number[]): number {
 export const F_FIRE = 0;
 export const F_WATER = 1;
 export const F_GRASS = 2;
-export const FACTION_NAMES = ["Fire", "Water", "Grass"];
+export const F_ELECTRIC = 3;
+export const FACTION_NAMES = ["Fire", "Water", "Grass", "Lightning"];
+export const FACTION_COUNT = FACTION_NAMES.length;
 
 // ------------------------------------------------------------------ kinds
 
-export type WeaponFx = "ember" | "bite" | "water" | "bubble" | "hydro" | "vine" | "leaf" | "solar" | "flame" | "spark" | "bolt";
+export type WeaponFx = "ember" | "bite" | "fang" | "scratch" | "absorb" | "water" | "bubble" | "hydro" | "vine" | "leaf" | "solar" | "flame" | "spark" | "bolt" | "thunder";
 
 export interface Weapon {
   name: string;
@@ -254,12 +256,22 @@ export const K_ROCK_SMALL = def({ key: "rock2", name: "Destructible Debris", str
 /** Xel'Naga watchtower: a ground unit next to it gives its team vision of a wide area. */
 export const K_TOWER = def({ key: "tower", name: "Watchtower", structure: true, resource: 4, faction: -2, radius: 1000, hp: 1, w: 2, h: 2, height: 3500, sight: 22 });
 
-// Worker (every faction).
-export const K_PIKACHU = def({
-  key: "pikachu", name: "Pikachu", ref: "SCV", types: [TY_ELECTRIC], worker: true, radius: 375, speed: 3940,
-  hp: 45, sight: 8, supply: 1, m: 50, time: 12000, height: 800,
-  weapon: weapon({ name: "Thunder Shock", range: 100, damage: 5, upgrade: 0, cooldown: 1070, type: TY_ELECTRIC, fx: "spark" }),
-});
+// Workers: one per faction, identical stats (SCV / Probe / Drone are the same economically).
+function worker(key: string, name: string, faction: number, type: number, move: string, fx: WeaponFx): number {
+  return def({
+    key, name, ref: "SCV", types: [type], faction, worker: true, radius: 375, speed: 3940,
+    hp: 45, sight: 8, supply: 1, m: 50, time: 12000, height: 800,
+    weapon: weapon({ name: move, range: 100, damage: 5, upgrade: 0, cooldown: 1070, type, fx }),
+  });
+}
+export const K_WORKER_FIRE = worker("growlithe", "Growlithe", F_FIRE, TY_FIRE, "Bite", "bite");
+export const K_WORKER_WATER = worker("psyduck", "Psyduck", F_WATER, TY_WATER, "Scratch", "scratch");
+export const K_WORKER_GRASS = worker("oddish", "Oddish", F_GRASS, TY_GRASS, "Absorb", "absorb");
+export const K_WORKER_ELECTRIC = worker("voltorb", "Voltorb", F_ELECTRIC, TY_ELECTRIC, "Spark", "spark");
+/** Worker kind of each faction. */
+export const FACTION_WORKERS = [K_WORKER_FIRE, K_WORKER_WATER, K_WORKER_GRASS, K_WORKER_ELECTRIC];
+/** Fire's worker, for code and tests that just need "a worker". */
+export const K_WORKER = K_WORKER_FIRE;
 
 // Fire.
 export const K_CHARMANDER = def({
@@ -270,7 +282,7 @@ export const K_CHARMANDER = def({
 export const K_CHARMELEON = def({
   key: "charmeleon", name: "Charmeleon", ref: "Zergling (adrenal)", types: [TY_FIRE], faction: F_FIRE, stage: 2,
   radius: 500, speed: 4130, hp: 120, armor: 1, sight: 9, supply: 2, height: 1150,
-  weapon: weapon({ name: "Fire Fang", range: 150, damage: 12, cooldown: 600, type: TY_FIRE, fx: "bite" }),
+  weapon: weapon({ name: "Fire Fang", range: 150, damage: 12, cooldown: 600, type: TY_FIRE, fx: "fang" }),
 });
 export const K_CHARIZARD = def({
   key: "charizard", name: "Charizard", ref: "Mutalisk", types: [TY_FIRE, TY_FLYING], faction: F_FIRE, stage: 3,
@@ -312,6 +324,23 @@ export const K_VENUSAUR = def({
   weapon: weapon({ name: "Solar Beam", range: 7000, damage: 40, upgrade: 3, cooldown: 1800, point: 300, air: true, splash: 750, type: TY_GRASS, fx: "solar" }),
 });
 
+// Lightning: fast hit-and-run (Adept → Stalker → Archon), hits air and ground.
+export const K_PICHU = def({
+  key: "pichu", name: "Pichu", ref: "Adept", types: [TY_ELECTRIC], faction: F_ELECTRIC, stage: 1,
+  radius: 375, speed: 4720, hp: 50, sight: 9, supply: 1, m: 50, g: 25, time: 18000, requires: K_GYM, height: 800,
+  weapon: weapon({ name: "Thunder Shock", range: 4000, damage: 7, cooldown: 1000, point: 120, air: true, type: TY_ELECTRIC, fx: "spark" }),
+});
+export const K_PIKACHU = def({
+  key: "pikachu", name: "Pikachu", ref: "Stalker", types: [TY_ELECTRIC], faction: F_ELECTRIC, stage: 2,
+  radius: 550, speed: 4130, hp: 140, armor: 1, sight: 10, supply: 2, height: 1100,
+  weapon: weapon({ name: "Thunderbolt", range: 6000, damage: 13, cooldown: 1340, point: 150, air: true, type: TY_ELECTRIC, fx: "bolt" }),
+});
+export const K_RAICHU = def({
+  key: "raichu", name: "Raichu", ref: "Archon", types: [TY_ELECTRIC], faction: F_ELECTRIC, stage: 3,
+  radius: 900, speed: 3940, ticksToFull: 4, hp: 380, armor: 1, sight: 11, supply: 4, height: 1600,
+  weapon: weapon({ name: "Thunder", range: 3000, damage: 25, upgrade: 3, cooldown: 1250, point: 200, air: true, splash: 1000, type: TY_ELECTRIC, fx: "thunder" }),
+});
+
 // Evolution lines (evolving is a morph that needs the given tech structure).
 function evo(from: number, to: number, m: number, g: number, ms: number, requires: number) {
   KINDS[from].evolve = { to, m, g, time: ticks(ms), requires };
@@ -322,11 +351,11 @@ evo(K_SQUIRTLE, K_WARTORTLE, 50, 25, 15000, K_SHRINE);
 evo(K_WARTORTLE, K_BLASTOISE, 150, 125, 30000, K_ELITE);
 evo(K_BULBASAUR, K_IVYSAUR, 50, 50, 17000, K_SHRINE);
 evo(K_IVYSAUR, K_VENUSAUR, 150, 150, 35000, K_ELITE);
+evo(K_PICHU, K_PIKACHU, 50, 50, 15000, K_SHRINE);
+evo(K_PIKACHU, K_RAICHU, 125, 125, 30000, K_ELITE);
 
-KINDS[K_CENTER].trains = [K_PIKACHU];
-
-/** Stage-1 unit each faction's Gym trains. */
-export const FACTION_UNITS: number[][] = [[K_CHARMANDER], [K_SQUIRTLE], [K_BULBASAUR]];
+/** Stage-1 unit each faction's Gym trains (the Pokémon Center trains the faction's worker). */
+export const FACTION_UNITS: number[][] = [[K_CHARMANDER], [K_SQUIRTLE], [K_BULBASAUR], [K_PICHU]];
 
 /** Structures a worker can build, in command card order. */
 export const BUILD_BASIC = [K_CENTER, K_MART, K_EXTRACTOR, K_GYM, K_TURRET];

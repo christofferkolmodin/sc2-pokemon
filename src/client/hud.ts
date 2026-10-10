@@ -1,3 +1,4 @@
+import type { Advisor, AdvisorLine, CrySet } from "./audio.ts";
 import { FP, TICKS_PER_SECOND_X10 } from "../sim/fixed.ts";
 import {
   BUILD_ADVANCED,
@@ -31,11 +32,12 @@ type Slotted = CardButton & { slot: number };
 
 const ICON = { move: "➜", stop: "■", hold: "⛊", patrol: "⇄", attack: "⚔", gather: "⛏", ret: "⤺", build: "🔨", adv: "⚒", rally: "⚑", cancel: "✕", evolve: "✦", back: "↩" };
 
-const ERRORS: Record<string, [string, string]> = {
-  minerals: ["Not enough minerals.", "Not enough minerals"],
-  gas: ["Not enough Vespene gas.", "You require more vespene gas"],
-  supply: ["Not enough supply. Build a Poké Mart.", "Additional supply required"],
-  max: ["Supply limit reached.", "Supply limit reached"],
+/** On-screen text and the advisor line spoken with it. */
+const ERRORS: Record<string, [string, AdvisorLine | ""]> = {
+  minerals: ["Not enough minerals.", "minerals"],
+  gas: ["Not enough Vespene gas.", "gas"],
+  supply: ["Not enough supply. Build a Poké Mart.", "supply"],
+  max: ["Supply limit reached.", "max"],
   place: ["Can't build there.", ""],
   tech: ["Requires more tech.", ""],
   queue: ["Queue is full.", ""],
@@ -79,6 +81,17 @@ export class Hud {
       g.fog = !g.fog;
       this.$("#btn-fog").textContent = g.fog ? "Fog: on" : "Fog: off";
     };
+
+    // Production tracker: click selects, double-click also jumps the camera there.
+    const prodClick = (e: MouseEvent, jump: boolean) => {
+      const el = (e.target as HTMLElement).closest("[data-pid]") as HTMLElement | null;
+      const u = el && g.world.byId.get(Number(el.dataset.pid));
+      if (!u) return;
+      g.selection.set([u.id]);
+      if (jump) g.cam.centerOn(u.x / FP, u.y / FP);
+    };
+    this.$("#production").addEventListener("click", (e) => prodClick(e, false));
+    this.$("#production").addEventListener("dblclick", (e) => prodClick(e, true));
 
     // Selection panel clicks (event delegation).
     this.$("#selpanel").addEventListener("click", (e) => {
@@ -179,6 +192,8 @@ export class Hud {
     const bars = this.$("#opt-bars") as HTMLSelectElement;
     const vol = this.$("#opt-volume") as HTMLInputElement;
     const voice = this.$("#opt-voice") as HTMLInputElement;
+    const advisor = this.$("#opt-advisor") as HTMLSelectElement;
+    const cries = this.$("#opt-cries") as HTMLSelectElement;
     const load = (k: string, d: string) => {
       try {
         return localStorage.getItem(k) ?? d;
@@ -197,18 +212,24 @@ export class Hud {
     bars.value = load("sc2poke.bars", "damaged");
     vol.value = load("sc2poke.volume", "50");
     voice.checked = load("sc2poke.voice", "1") === "1";
+    advisor.value = load("sc2poke.advisor", "professor");
+    cries.value = load("sc2poke.crySet", "anime"); // same key and default as the lobby
     const apply = () => {
       g.renderer.quality = q.value as "high" | "low";
       g.bars = bars.value as "always" | "damaged";
       g.audio.setVolume(Number(vol.value) / 100);
       g.audio.voice = voice.checked;
+      g.audio.advisor = advisor.value as Advisor;
+      g.audio.cries = cries.value as CrySet;
       save("sc2poke.quality", q.value);
       save("sc2poke.bars", bars.value);
       save("sc2poke.volume", vol.value);
       save("sc2poke.voice", voice.checked ? "1" : "0");
+      save("sc2poke.advisor", advisor.value);
+      save("sc2poke.crySet", cries.value);
       g.resize();
     };
-    for (const el of [q, bars, vol, voice]) el.addEventListener("change", apply);
+    for (const el of [q, bars, vol, voice, advisor, cries]) el.addEventListener("change", apply);
     apply();
     this.$("#btn-replay").onclick = () => this.downloadReplay();
     this.$("#btn-surrender").hidden = g.world.mode !== "melee" || !g.canCommand;
@@ -283,6 +304,10 @@ export class Hud {
     b.hidden = false;
   }
 
+  hideBanner() {
+    this.$("#banner").hidden = true;
+  }
+
   toast(text: string, color = "#ffe39a") {
     const t = this.$("#toast");
     t.textContent = text;
@@ -337,7 +362,7 @@ export class Hud {
       .join("");
     this.$("#over-stats").innerHTML = `<p>Game length ${Math.floor(mins)}:${String(Math.floor((mins % 1) * 60)).padStart(2, "0")}</p>
       <table><tr><th>Player</th><th>Faction</th><th>Minerals</th><th>Gas</th><th>Made</th><th>Kills</th><th>Lost</th><th></th></tr>${rows}</table>`;
-    this.g.audio.say(victory ? "Victory" : "You have been defeated", 0);
+    this.g.audio.say(victory ? "victory" : "defeat", 0);
   }
 
   private downloadReplay() {
@@ -358,6 +383,10 @@ export class Hud {
     this.updateCommandCard();
     this.updateSelection(now);
     this.updateGroups();
+    if (now - this.lastProduction > 150) {
+      this.lastProduction = now;
+      this.updateProduction();
+    }
     const first = this.g.world.byId.get(this.g.selection.ids[0]);
     const lead = this.g.world.byId.get(this.g.activeIds()[0] ?? this.g.selection.ids[0]) ?? first;
     this.portrait.show(lead ? lead.kind : -1, lead?.owner ?? 0, FACTION_COLORS[this.g.world.players.get(lead?.owner ?? 0)?.faction ?? 0]);
@@ -368,6 +397,44 @@ export class Hud {
       this.syncTuning();
       for (const c of this.chatLog) if (now - c.t > 12000) c.el.classList.add("old");
     }
+  }
+
+  private lastProduction = 0;
+
+  /**
+   * Production tracker (top right, like SC2's production tab): every unit being
+   * trained, evolution, upgrade and building under construction, with progress.
+   * Click an item to select it, double-click to jump the camera there too.
+   */
+  private updateProduction() {
+    const g = this.g;
+    const el = this.$("#production");
+    if (g.me < 0) {
+      el.hidden = true;
+      return;
+    }
+    const items: string[] = [];
+    for (const u of g.world.units) {
+      if (u.owner !== g.me || u.dead) continue;
+      const k = KINDS[u.kind];
+      if (k.structure && u.progress < k.time) {
+        items.push(this.prodItem(u.id, `<img src="${g.renderer.unitIcon(u.kind, u.owner, 36)}" alt="">`, u.progress / k.time, "build", `${k.name} (under construction)`));
+      } else if (k.structure && u.queue.length) {
+        const q = u.queue[0];
+        const icon = q.kind >= 0 ? `<img src="${g.renderer.unitIcon(q.kind, u.owner, 36)}" alt="">` : `<span class="upg">${q.up === UP_ATTACK ? "⚔" : "⛨"}</span>`;
+        const what = q.kind >= 0 ? KINDS[q.kind].name : q.up === UP_ATTACK ? "Attack upgrade" : "Defense upgrade";
+        items.push(this.prodItem(u.id, icon, q.t / q.total, "", `${what} at ${k.name}${u.queue.length > 1 ? ` (+${u.queue.length - 1} queued)` : ""}`, u.queue.length));
+      } else if (u.morphTo >= 0) {
+        items.push(this.prodItem(u.id, `<img src="${g.renderer.unitIcon(u.morphTo, u.owner, 36)}" alt="">`, u.morphT / Math.max(1, u.morphTotal), "evo", `${k.name} evolving into ${KINDS[u.morphTo].name}`));
+      }
+    }
+    el.hidden = items.length === 0;
+    const html = items.slice(0, 20).join("");
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+
+  private prodItem(id: number, icon: string, pct: number, cls: string, title: string, count = 0): string {
+    return `<div class="pi${cls ? " " + cls : ""}" data-pid="${id}" title="${esc(title)}">${icon}${count > 1 ? `<span class="n">${count}</span>` : ""}<div class="bar"><i style="width:${Math.floor(pct * 100)}%"></i></div></div>`;
   }
 
   private cost(m: number, g: number, supply = 0): string {
@@ -416,11 +483,11 @@ export class Hud {
       return out;
     }
     if (k.structure) {
+      // Finished buildings in a mixed selection still train (the sim skips unfinished ones);
+      // Esc cancels construction first, see Game.cancelWork().
       const building = units.some((u) => !w.isDone(u));
-      if (building) {
-        add({ key: "cancelb", hk: "Escape", label: "Cancel construction (Esc, 75% refund)", icon: ICON.cancel, act: () => g.cancelWork() }, 14);
-        return out;
-      }
+      if (building) add({ key: "cancelb", hk: "Escape", label: "Cancel construction (Esc, 75% refund)", icon: ICON.cancel, act: () => g.cancelWork() }, 14);
+      if (units.every((u) => !w.isDone(u))) return out;
       const trains = w.trainable(g.me, kind);
       trains.forEach((tk, i) => {
         const t = KINDS[tk];
@@ -460,8 +527,38 @@ export class Hud {
           );
         });
       }
+      // Other production buildings in the selection (a Pokémon Center with Gyms, say): their train
+      // buttons show too, each sent to its own buildings, so mixed selections need no Tab.
+      // Hotkeys don't clash (Center S, Gym A); upgrade buildings stay on Tab, their A would.
+      if (trains.length) {
+        let slot = trains.length;
+        for (const sk of g.subgroups()) {
+          if (sk === kind || !KINDS[sk].structure) continue;
+          const skIds = g.selection.commandable().filter((id) => {
+            const b = w.byId.get(id);
+            return b?.kind === sk && w.isDone(b);
+          });
+          const skTrains = skIds.length ? w.trainable(g.me, sk) : [];
+          for (const tk of skTrains) {
+            const t = KINDS[tk];
+            add(
+              {
+                key: `train:${tk}`,
+                hk: sk === K_CENTER ? "S" : "A",
+                label: `Train ${t.name} (${KINDS[sk].name})`,
+                icon: "",
+                img: g.renderer.unitIcon(tk, g.me, 40),
+                tip: `${this.cost(t.m, t.g, t.supply)} · ${Math.round(t.time / 22.4)}s<br>${this.describe(tk)}`,
+                disabled: !w.hasStructure(g.me, t.requires),
+                act: () => g.send({ t: "train", ids: skIds, kind: tk }),
+              },
+              slot++,
+            );
+          }
+        }
+      }
       if (trains.length) add({ key: "rally", hk: "Y", label: "Set rally point", icon: ICON.rally, act: () => g.setTargeting("rally") }, 9);
-      if (units.some((u) => u.queue.length > 0)) add({ key: "cancelq", hk: "Escape", label: "Cancel last in queue (Esc)", icon: ICON.cancel, act: () => g.cancelWork() }, 14);
+      if (!building && units.some((u) => u.queue.length > 0)) add({ key: "cancelq", hk: "Escape", label: "Cancel last in queue (Esc)", icon: ICON.cancel, act: () => g.cancelWork() }, 14);
       return out;
     }
     // Units.
@@ -591,7 +688,7 @@ export class Hud {
       panel.innerHTML = this.single(g.world.byId.get(ids[0])!);
       return;
     }
-    const MAX = 48;
+    const MAX = 32; // 4 rows of 8 fit the panel
     const active = g.activeKind();
     const units = ids.slice(0, MAX).map((id) => g.world.byId.get(id)!) as Unit[];
     panel.innerHTML =
@@ -600,9 +697,22 @@ export class Hud {
           const k = KINDS[u.kind];
           const f = u.hp / k.hp;
           const col = f > 0.5 ? "#3be04b" : f > 0.25 ? "#f2d22e" : "#f0402e";
-          return `<div class="u${u.kind === active ? " act" : ""}" data-id="${u.id}" title="${k.name}" style="border-color:${col}"><img src="${g.renderer.unitIcon(u.kind, u.owner, 40)}" alt=""></div>`;
+          return `<div class="u${u.kind === active ? " act" : ""}" data-id="${u.id}" title="${k.name}" style="border-color:${col}"><img src="${g.renderer.unitIcon(u.kind, u.owner, 40)}" alt="">${this.tileProgress(u)}</div>`;
         })
         .join("")}</div>` + (ids.length > MAX ? `<div class="sel-more">+${ids.length - MAX} more (${ids.length} selected)</div>` : "");
+  }
+
+  /** Little "what's it making" marker and progress bar on a multi-select tile. */
+  private tileProgress(u: Unit): string {
+    const g = this.g;
+    if (!g.selection.isMine(u)) return "";
+    const k = KINDS[u.kind];
+    if (k.structure && u.progress < k.time) return `<div class="pb"><i style="width:${Math.floor((u.progress / k.time) * 100)}%"></i></div>`;
+    if (u.morphTo >= 0) return `<div class="pb evo"><i style="width:${Math.floor((u.morphT / Math.max(1, u.morphTotal)) * 100)}%"></i></div>`;
+    if (!k.structure || !u.queue.length) return "";
+    const q = u.queue[0];
+    const mk = q.kind >= 0 ? `<img src="${g.renderer.unitIcon(q.kind, u.owner, 18)}" alt="">` : q.up === UP_ATTACK ? "⚔" : "⛨";
+    return `<span class="mk">${mk}</span><div class="pb"><i style="width:${Math.floor((q.t / q.total) * 100)}%"></i></div>`;
   }
 
   private single(u: Unit): string {
@@ -650,9 +760,13 @@ export class Hud {
     if (sig === this.grpSig) return;
     this.grpSig = sig;
     const order = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
+    // Every group has a fixed slot (1 leftmost ... 0 rightmost), like SC2; empty slots stay as gaps.
     this.$("#groups").innerHTML = order
-      .filter((i) => s.groups[i].length > 0)
-      .map((i) => `<div class="grp${s.groups[i].join(",") === cur ? " active" : ""}" data-g="${i}" data-ui><span>${i}</span><b>${s.groups[i].length}</b></div>`)
+      .map((i) =>
+        s.groups[i].length > 0
+          ? `<div class="grp${s.groups[i].join(",") === cur ? " active" : ""}" data-g="${i}" data-ui><span>${i}</span><b>${s.groups[i].length}</b></div>`
+          : `<div class="grp empty"></div>`,
+      )
       .join("");
   }
 

@@ -8,8 +8,12 @@
 export type V3 = [number, number, number];
 
 export interface Prim {
-  /** Shape: ellipsoid, round cone/capsule (a -> b), rounded box, torus (ring in the XZ plane). */
-  k: "ell" | "cap" | "box" | "tor";
+  /**
+   * Shape: ellipsoid, round cone/capsule (a -> b), rounded box, torus (ring in the XZ plane), or a flat
+   * trapezoid plate (in the YZ plane, `r` = [half thickness, half height, half width at the bottom],
+   * `top` = half width at the top; for fan-shaped ears and fins).
+   */
+  k: "ell" | "cap" | "box" | "tor" | "trap" | "poly";
   /** Centre (ell, box, tor) or start point (cap). */
   p: V3;
   /** Radii (ell), half size (box), [R, r, 0] (tor). For cap: [r1, r2, 0]. */
@@ -18,7 +22,16 @@ export interface Prim {
   b?: V3;
   /** Euler rotation (x, y, z) in radians, applied to ell / box / tor. */
   rot?: V3;
-  /** Box corner rounding. */
+  /** Trapezoid: half width at the top edge. */
+  top?: number;
+  /** Trapezoid: rounding of the outline's corners (softer ears). */
+  corner?: number;
+  /**
+   * Flat plate with any outline ("poly"): points as [y, z] in the prim's own plane
+   * (before `rot`), extruded to half thickness r[0] along X. For ears with one sharp tip.
+   */
+  poly?: [number, number][];
+  /** Box / trapezoid corner rounding. */
   round?: number;
   /** Colour (hex). */
   c: string;
@@ -43,6 +56,9 @@ interface Compiled {
   baba: number;
   m: number[] | null; // inverse rotation (row-major 3x3)
   round: number;
+  top: number;
+  corner: number;
+  poly: [number, number][] | null;
   col: [number, number, number];
   glow: number;
   k2: number;
@@ -78,7 +94,7 @@ function compile(prims: Prim[]): Compiled[] {
       const b = v.b ?? v.p;
       const ba: V3 = [b[0] - v.p[0], b[1] - v.p[1], b[2] - v.p[2]];
       out.push({
-        k: v.k === "ell" ? 0 : v.k === "cap" ? 1 : v.k === "box" ? 2 : 3,
+        k: v.k === "ell" ? 0 : v.k === "cap" ? 1 : v.k === "box" ? 2 : v.k === "tor" ? 3 : v.k === "trap" ? 4 : 5,
         p: v.p,
         r: v.r,
         b,
@@ -86,6 +102,9 @@ function compile(prims: Prim[]): Compiled[] {
         baba: ba[0] * ba[0] + ba[1] * ba[1] + ba[2] * ba[2],
         m: v.rot ? rotInv(v.rot) : null,
         round: v.round ?? 0,
+        top: v.top ?? 0,
+        corner: v.corner ?? 0,
+        poly: v.poly ?? null,
         col: hexToRgb(v.c),
         glow: v.glow ?? 0,
         k2: v.k2 ?? 0,
@@ -99,7 +118,10 @@ function compile(prims: Prim[]): Compiled[] {
 
 function mirrorZ(q: Prim): Prim {
   const rot: V3 | undefined = q.rot ? [-q.rot[0], -q.rot[1], q.rot[2]] : undefined;
-  return { ...q, p: [q.p[0], q.p[1], -q.p[2]], b: q.b ? [q.b[0], q.b[1], -q.b[2]] : undefined, rot, mirror: false };
+  // Mirroring a rotated prim = negated rotation applied to the mirrored local shape,
+  // so a lopsided outline flips too.
+  const poly = q.poly ? q.poly.map(([y, z]): [number, number] => [y, -z]) : undefined;
+  return { ...q, p: [q.p[0], q.p[1], -q.p[2]], b: q.b ? [q.b[0], q.b[1], -q.b[2]] : undefined, rot, poly, mirror: false };
 }
 
 function primDist(c: Compiled, x: number, y: number, z: number): number {
@@ -140,9 +162,56 @@ function primDist(c: Compiled, x: number, y: number, z: number): number {
       const qz = Math.abs(pz) - c.r[2] + c.round;
       return Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qy, qz), 0) - c.round;
     }
-    default: {
+    case 5: {
+      // Flat outline plate: iq's 2D polygon distance in the local YZ plane, extruded along X, rounded.
+      const v = c.poly!;
+      const rd = c.round;
+      let d = (py - v[0][0]) ** 2 + (pz - v[0][1]) ** 2;
+      let s = 1;
+      for (let i = 0, j = v.length - 1; i < v.length; j = i, i++) {
+        const ey = v[j][0] - v[i][0];
+        const ez = v[j][1] - v[i][1];
+        const wy = py - v[i][0];
+        const wz = pz - v[i][1];
+        // Repeated points (e.g. both edges meeting at a tip) make a zero-length edge.
+        const ee = ey * ey + ez * ez;
+        const t = ee > 0 ? Math.max(0, Math.min(1, (wy * ey + wz * ez) / ee)) : 0;
+        const by = wy - ey * t;
+        const bz = wz - ez * t;
+        d = Math.min(d, by * by + bz * bz);
+        const c1 = pz >= v[i][1];
+        const c2 = pz < v[j][1];
+        const c3 = ey * wz > ez * wy;
+        if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
+      }
+      const d2 = s * Math.sqrt(d) - c.corner;
+      const wx = Math.abs(px) - c.r[0] + rd;
+      return Math.min(Math.max(d2 + rd, wx), 0) + Math.hypot(Math.max(d2 + rd, 0), Math.max(wx, 0)) - rd;
+    }
+    case 3: {
       const qx = Math.hypot(px, pz) - c.r[0];
       return Math.hypot(qx, py) - c.r[1];
+    }
+    default: {
+      // Trapezoid plate: iq's 2D trapezoid in the YZ plane (bottom half width r[2] at y = -r[1],
+      // top half width `top` at y = +r[1]), extruded to thickness r[0] along X, edges rounded.
+      const rd = c.round;
+      const cr = c.corner;
+      const r1 = c.r[2] - rd - cr;
+      const r2 = c.top - rd - cr;
+      const he = c.r[1] - rd - cr;
+      const qx = Math.abs(pz);
+      const qy = py;
+      const k2x = r2 - r1;
+      const k2y = 2 * he;
+      const cax = qx - Math.min(qx, qy < 0 ? r1 : r2);
+      const cay = Math.abs(qy) - he;
+      const t = Math.max(0, Math.min(1, ((r2 - qx) * k2x + (he - qy) * k2y) / (k2x * k2x + k2y * k2y)));
+      const cbx = qx - r2 + k2x * t;
+      const cby = qy - he + k2y * t;
+      const d2 = (cbx < 0 && cay < 0 ? -1 : 1) * Math.sqrt(Math.min(cax * cax + cay * cay, cbx * cbx + cby * cby)) - cr;
+      const wy = Math.abs(px) - c.r[0] + rd;
+      return Math.min(Math.max(d2, wy), 0) + Math.hypot(Math.max(d2, 0), Math.max(wy, 0)) - rd;
     }
   }
 }
@@ -204,7 +273,7 @@ export class Sdf {
     const max: V3 = [-1e9, -1e9, -1e9];
     for (const c of this.c) {
       if (c.sub || c.paint) continue;
-      const ext = c.k === 0 || c.k === 2 ? Math.max(...c.r) : c.k === 3 ? c.r[0] + c.r[1] : Math.max(c.r[0], c.r[1]);
+      const ext = c.k === 0 || c.k === 2 ? Math.max(...c.r) : c.k === 3 ? c.r[0] + c.r[1] : c.k === 4 ? Math.hypot(c.r[1], Math.max(c.r[2], c.top)) + c.r[0] : c.k === 5 ? Math.max(...c.poly!.map(([y, z]) => Math.hypot(y, z))) + c.r[0] + c.corner : Math.max(c.r[0], c.r[1]);
       for (const p of c.k === 1 ? [c.p, c.b] : [c.p]) {
         for (let i = 0; i < 3; i++) {
           min[i] = Math.min(min[i], p[i] - ext);

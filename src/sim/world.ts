@@ -1,6 +1,6 @@
 import { FP, abs, clamp, fdiv, idiv, isqrt, pct } from "./fixed.ts";
 import { type GameMap, clearanceFor, footprintFree, isBlockedAt, isBlockedTile, isPassable, makeMap, occupy } from "./map.ts";
-import { FlowField, clearPath, nearestPassableTile, steerTarget } from "./flowfield.ts";
+import { FlowField, UNREACHABLE, clearPath, nearField, nearestPassableTile, steerTarget } from "./flowfield.ts";
 import {
   type Command,
   MODE_ATTACK,
@@ -15,7 +15,9 @@ import {
 import {
   BUILD_ADVANCED,
   BUILD_BASIC,
+  FACTION_COUNT,
   FACTION_UNITS,
+  FACTION_WORKERS,
   GAS_CARRY,
   GAS_TICKS,
   KINDS,
@@ -27,12 +29,13 @@ import {
   K_GEYSER,
   K_GYM,
   K_MINERAL,
-  K_PIKACHU,
   K_ROCK,
   K_ROCK_SMALL,
   K_SQUIRTLE,
   K_TOWER,
   K_VENUSAUR,
+  K_PICHU,
+  K_RAICHU,
   MAX_QUEUE,
   MAX_SUPPLY,
   MAX_UPGRADE,
@@ -60,6 +63,8 @@ export interface Order {
   field: FlowField | null;
   /** Units given the same command share a group id; used for SC2-style group arrival. */
   group: number;
+  /** Small-unit field used to squeeze out of a pocket the unit's own field can't reach. */
+  escape?: FlowField | null;
   /** Keeping formation (magic box): each unit heads for its own slot, so no group arrival. */
   formation: boolean;
   /** Patrol: the point to return to. */
@@ -82,6 +87,8 @@ export interface QueueItem {
   up: number;
   t: number;
   total: number;
+  /** Supply claimed; units take it when they start training, not when queued. */
+  on: boolean;
 }
 
 export const NAV_NONE = 0;
@@ -116,6 +123,8 @@ export interface Unit {
   wpy: number;
   wpTick: number;
   bestDist: number;
+  /** Best remaining path length seen (flow-field units), so detours around cliffs count as progress. */
+  bestPath: number;
   stuck: number;
   // Navigation request for this tick (set by think, used by steer).
   navKind: number;
@@ -331,7 +340,7 @@ export class World {
       id: pid,
       slot,
       team: this.opts.teams?.[pid] ?? pid,
-      faction: clamp(this.opts.factions?.[pid] ?? 0, 0, 2),
+      faction: clamp(this.opts.factions?.[pid] ?? 0, 0, FACTION_COUNT - 1),
       m: rich || START_MINERALS,
       g: rich,
       supply: 0,
@@ -379,7 +388,7 @@ export class World {
       const d = Math.max(1, isqrt(dx * dx + dy * dy));
       const sx = hall.x + idiv(dx * FP * 4, d);
       const sy = hall.y + idiv(dy * FP * 4, d);
-      const ws = this.spawn(pid, K_PIKACHU, sx, sy, START_WORKERS);
+      const ws = this.spawn(pid, FACTION_WORKERS[this.players.get(pid)!.faction], sx, sy, START_WORKERS);
       ws.forEach((w, i) => {
         const m = minerals[i % Math.max(1, minerals.length)];
         if (m) this.orderTarget(w, m, MODE_GATHER, false);
@@ -394,6 +403,8 @@ export class World {
       [K_BULBASAUR, 8],
       [K_VENUSAUR, 2],
       [K_CHARIZARD, 8],
+      [K_RAICHU, 2],
+      [K_PICHU, 10],
     ];
     this.opts.players.forEach((pid, slot) => {
       const s = this.map.starts[slot % this.map.starts.length];
@@ -406,6 +417,8 @@ export class World {
         [-4, 3],
         [3, 3],
         [0, 6],
+        [0, -6],
+        [0, 0],
       ];
       army.forEach(([kind, n], i) => this.spawn(pid, kind, cx + offs[i][0] * FP, cy + offs[i][1] * FP, n));
     });
@@ -468,6 +481,7 @@ export class World {
   /** Units a Gym or Pokémon Center owned by `pid` can train. */
   trainable(pid: number, structureKind: number): number[] {
     if (structureKind === K_GYM) return FACTION_UNITS[this.players.get(pid)?.faction ?? 0];
+    if (structureKind === K_CENTER) return [FACTION_WORKERS[this.players.get(pid)?.faction ?? 0]];
     return KINDS[structureKind].trains;
   }
 
@@ -583,6 +597,7 @@ export class World {
       wpy: y,
       wpTick: -1,
       bestDist: 0,
+      bestPath: 0,
       stuck: 0,
       navKind: NAV_NONE,
       navX: x,
@@ -706,6 +721,10 @@ export class World {
   private releaseOrder(o: Order) {
     this.releaseField(o.field);
     o.field = null;
+    if (o.escape) {
+      this.releaseField(o.escape);
+      o.escape = null;
+    }
   }
 
   private clearOrders(u: Unit) {
@@ -726,6 +745,7 @@ export class World {
     u.arrivedGroup = 0;
     u.wpTick = -1;
     u.bestDist = 0x3fffffff;
+    u.bestPath = 0x3fffffff;
     u.stuck = 0;
   }
 
@@ -965,12 +985,26 @@ export class World {
     }
     if (!best) return this.error(p, "queue");
     if (!this.hasStructure(p, k.requires)) return this.error(p, "tech");
-    if (!this.canAfford(p, k.m, k.g, k.supply)) return;
+    // Supply only matters if it would start right away; queued units wait for it.
+    if (!this.canAfford(p, k.m, k.g, best.queue.length === 0 ? k.supply : 0)) return;
     const pl = this.players.get(p)!;
     pl.m -= k.m;
     pl.g -= k.g;
-    pl.supply += k.supply;
-    best.queue.push({ kind: c.kind, up: -1, t: 0, total: k.time });
+    best.queue.push({ kind: c.kind, up: -1, t: 0, total: k.time, on: false });
+    this.startQueue(best);
+  }
+
+  /** Claim supply for the front of the queue; it stays paused while supply blocked. */
+  private startQueue(b: Unit): boolean {
+    const item = b.queue[0];
+    if (!item) return false;
+    if (item.on || item.kind < 0) return true;
+    const pl = this.players.get(b.owner);
+    const s = KINDS[item.kind].supply;
+    if (!pl || (!this.sandbox && pl.supply + s > this.cap(b.owner))) return false;
+    pl.supply += s;
+    item.on = true;
+    return true;
   }
 
   private applyResearch(p: number, c: Extract<Command, { t: "research" }>) {
@@ -991,7 +1025,7 @@ export class World {
     pl.m -= cost.m;
     pl.g -= cost.g;
     pl.researching[c.up] = 1;
-    best.queue.push({ kind: -1, up: c.up, t: 0, total: cost.time });
+    best.queue.push({ kind: -1, up: c.up, t: 0, total: cost.time, on: false });
   }
 
   private applyEvolve(p: number, c: Extract<Command, { t: "evolve" }>) {
@@ -1049,7 +1083,7 @@ export class World {
       const k = KINDS[item.kind];
       pl.m += k.m;
       pl.g += k.g;
-      pl.supply -= k.supply;
+      if (item.on) pl.supply -= k.supply;
     } else {
       const cost = upgradeCost(pl.up[item.up] + 1);
       pl.m += cost.m;
@@ -1216,7 +1250,7 @@ export class World {
       return;
     }
     const item = u.queue[0];
-    if (item && ++item.t >= item.total) {
+    if (item && this.startQueue(u) && ++item.t >= item.total) {
       u.queue.shift();
       if (item.kind >= 0) this.finishTrain(u, item.kind);
       else this.finishResearch(u, item.up);
@@ -1586,8 +1620,8 @@ export class World {
       } else {
         if (this.isDone(u)) p.provided -= k.provides;
         for (const item of u.queue) {
-          if (item.kind >= 0) p.supply -= KINDS[item.kind].supply;
-          else p.researching[item.up] = 0;
+          if (item.kind < 0) p.researching[item.up] = 0;
+          else if (item.on) p.supply -= KINDS[item.kind].supply;
         }
       }
     }
@@ -1883,6 +1917,18 @@ export class World {
     if (!o || o.tile < 0) return null;
     if (o.field && o.field.goalTile !== o.tile) this.releaseOrder(o);
     if (!o.field) o.field = this.acquireField(o.tile, u.req);
+    // Crowds can shove a big unit into a pocket that only small units can get out of: its own
+    // field has no path from there. Follow the small-unit field until it's back near its own.
+    const tx = fdiv(u.x, FP);
+    const ty = fdiv(u.y, FP);
+    const here = tx >= 0 && ty >= 0 && tx < this.map.w && ty < this.map.h ? ty * this.map.w + tx : -1;
+    if (u.req > 0 && here >= 0 && o.field.dist[here] >= UNREACHABLE && !nearField(this.map, o.field, tx, ty, 2)) {
+      if (!o.escape) o.escape = this.acquireField(o.tile, 0);
+      if (o.escape.dist[here] < UNREACHABLE) return o.escape;
+    } else if (o.escape) {
+      this.releaseField(o.escape);
+      o.escape = null;
+    }
     return o.field;
   }
 
@@ -2183,13 +2229,49 @@ export class World {
       if (touched) return this.completeOrder(u);
     }
 
-    // Give up when no progress is being made (blocked by a wall of units, etc.).
-    if (dist + (FP >> 4) < u.bestDist) {
-      u.bestDist = dist;
+    // Give up when no progress is being made (blocked by a wall of units, etc.). Progress is
+    // getting closer in a straight line or along the path: a route that bends around a cliff
+    // can lead away from the target for a while.
+    const tx = fdiv(u.x, FP);
+    const ty = fdiv(u.y, FP);
+    const pf = o.escape ?? o.field;
+    const path = pf && tx >= 0 && ty >= 0 && tx < this.map.w && ty < this.map.h ? pf.dist[ty * this.map.w + tx] : UNREACHABLE;
+    const closer = dist + (FP >> 4) < u.bestDist;
+    const along = path < u.bestPath;
+    if (closer) u.bestDist = dist;
+    if (along) u.bestPath = path;
+    if (closer || along) {
       u.stuck = 0;
-    } else if (++u.stuck >= t.giveUpTicks) {
+    } else if ((u.stuck += !this.inJam(u, i, o.group) || (this.tick & 3) === 0 ? 1 : 0) >= t.giveUpTicks) {
       this.completeOrder(u);
     }
+  }
+
+  /**
+   * Is the unit wedged among group-mates that are still on their way (a traffic jam at a
+   * ramp)? Units in a jam wait their turn instead of giving up quickly.
+   */
+  private inJam(u: Unit, i: number, group: number): boolean {
+    const c = this.unitCell[i];
+    const cx = c % this.gw;
+    const cy = idiv(c - cx, this.gw);
+    for (let y = cy - 1; y <= cy + 1; y++) {
+      if (y < 0 || y >= this.gh) continue;
+      for (let x = cx - 1; x <= cx + 1; x++) {
+        if (x < 0 || x >= this.gw) continue;
+        const cell = y * this.gw + x;
+        for (let k = this.cellStart[cell]; k < this.cellStart[cell + 1]; k++) {
+          const b = this.hashUnits[this.cellItems[k]];
+          if (b === u || b.dead || b.owner !== u.owner || b.air !== u.air) continue;
+          if (b.orders.length === 0 || b.orders[0].group !== group) continue;
+          const ex = b.x - u.x;
+          const ey = b.y - u.y;
+          const reach = b.radius + u.radius + TOUCH_MARGIN;
+          if (ex * ex + ey * ey <= reach * reach) return true;
+        }
+      }
+    }
+    return false;
   }
 
   private completeOrder(u: Unit) {

@@ -21,6 +21,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { TICK_MS } from "../sim/fixed.ts";
 import { type PlayerCommand, sanitizeCommand } from "../sim/commands.ts";
 import { BUILTIN_MAPS } from "../sim/map.ts";
+import { FACTION_COUNT } from "../sim/units.ts";
 import { type ClientMsg, type Difficulty, type LobbyPlayer, MAX_PLAYERS, type ServerMsg } from "../net/protocol.ts";
 import { Gate, loadPassword } from "./auth.ts";
 
@@ -65,6 +66,10 @@ const MIME: Record<string, string> = {
   ".glb": "model/gltf-binary",
   ".gltf": "model/gltf+json",
   ".ico": "image/x-icon",
+  ".ogg": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
 };
 
 async function serveFile(res: import("node:http").ServerResponse, base: string, path: string) {
@@ -105,6 +110,36 @@ const http = createServer(async (req, res) => {
       res.end(JSON.stringify(files));
       return;
     }
+    if (path === "/api/sounds") {
+      const dir = join(ASSET_DIR, "sounds");
+      // Subfolders too: cries/latest, cries/legacy (npm run fetch-cries) and advisor/<who>.
+      const files = existsSync(dir)
+        ? readdirSync(dir, { recursive: true, encoding: "utf8" })
+            .map((f) => f.replace(/\\/g, "/"))
+            .filter((f) => /\.(mp3|ogg|wav|m4a)$/i.test(f))
+        : [];
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+      res.end(JSON.stringify(files));
+      return;
+    }
+    if (path === "/api/rooms") {
+      // Rooms still in the lobby, so friends can join without being told the name.
+      const open = [...rooms.values()]
+        .filter((r) => (r.started ? r.seats.some((s) => !r.players.some((p) => p.id === s.id)) : r.players.length > 0))
+        .map((r) => ({
+          code: r.code,
+          host: r.players.find((p) => p.id === r.host)?.name ?? r.seats[0]?.name ?? "",
+          players: r.players.length + r.ai.length,
+          max: Math.min(MAX_PLAYERS, mapPlayers(r.map)),
+          map: mapList().find((m) => m.key === r.map)?.name ?? r.map,
+          // Running games are listed only so a player who dropped out can get back in.
+          inProgress: r.started,
+          missing: r.started ? r.seats.filter((s) => !r.players.some((p) => p.id === s.id)).map((s) => s.name) : [],
+        }));
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+      res.end(JSON.stringify(open));
+      return;
+    }
     if (path === "/api/maps") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
       res.end(JSON.stringify(mapList().filter((m) => !BUILTIN_MAPS.some(([k]) => k === m.key))));
@@ -112,8 +147,8 @@ const http = createServer(async (req, res) => {
     }
     if (path.startsWith("/assets/")) {
       const rest = path.slice("/assets/".length);
-      // Only maps and models are served from the private asset folder.
-      if (!/^(maps|models)\//.test(rest)) {
+      // Only maps, models, sounds and lobby pictures are served from the private asset folder.
+      if (!/^(maps|models|sounds|img)\//.test(rest)) {
         res.writeHead(404).end();
         return;
       }
@@ -157,7 +192,18 @@ interface Room {
   /** tick -> (player id -> hash) */
   hashes: Map<number, Map<number, number>>;
   activeIds: number[];
+  /** Human seats at the start, so a player who drops out can take theirs back. */
+  seats: { id: number; name: string; faction: number }[];
+  /** Every non-empty turn so far, to fast-forward a rejoining player. */
+  log: { tick: number; cmds: PlayerCommand[] }[];
+  /** The start message, resent to rejoining players. */
+  startMsg: Extract<ServerMsg, { type: "start" }> | null;
+  /** Closes a started room nobody is in any more. */
+  closeTimer: ReturnType<typeof setTimeout> | null;
 }
+
+/** How long a running game waits (paused) for someone to come back before it's closed. */
+const EMPTY_ROOM_GRACE_MS = 10 * 60 * 1000;
 
 const rooms = new Map<string, Room>();
 
@@ -202,10 +248,10 @@ function mapPlayers(key: string): number {
 function join_(c: Client, code: string) {
   let room = rooms.get(code);
   if (!room) {
-    room = { code, players: [], ai: [], host: 0, map: "pallet", started: false, tick: 0, t0: 0, timer: null, pending: [], hashes: new Map(), activeIds: [] };
+    room = { code, players: [], ai: [], host: 0, map: "pallet", started: false, tick: 0, t0: 0, timer: null, pending: [], hashes: new Map(), activeIds: [], seats: [], log: [], startMsg: null, closeTimer: null };
     rooms.set(code, room);
   }
-  if (room.started) return send(c, { type: "error", msg: "That game has already started." });
+  if (room.started) return rejoin(c, room);
   if (room.players.length + room.ai.length >= MAX_PLAYERS) return send(c, { type: "error", msg: `Room is full (max ${MAX_PLAYERS}).` });
   // Player ids double as unit owner ids in the sim. Reuse the lowest free one.
   c.id = freeId(room);
@@ -218,12 +264,12 @@ function join_(c: Client, code: string) {
 function onSetup(c: Client, room: Room, m: Extract<ClientMsg, { type: "setup" }>) {
   if (room.started) return;
   const isHost = room.host === c.id;
-  if (Number.isInteger(m.faction) && m.faction! >= 0 && m.faction! <= 2) c.faction = m.faction!;
+  if (Number.isInteger(m.faction) && m.faction! >= 0 && m.faction! < FACTION_COUNT) c.faction = m.faction!;
   if (isHost && typeof m.map === "string" && mapList().some((x) => x.key === m.map)) room.map = m.map;
   if (isHost && m.addAi && ["easy", "medium", "hard"].includes(m.addAi)) {
     if (room.players.length + room.ai.length < Math.min(MAX_PLAYERS, mapPlayers(room.map))) {
       const id = freeId(room);
-      const faction = Math.floor(Math.random() * 3);
+      const faction = Math.floor(Math.random() * FACTION_COUNT);
       room.ai.push({ id, name: `Computer ${id}`, faction, difficulty: m.addAi });
     }
   }
@@ -252,7 +298,9 @@ function startGame(room: Room) {
     factions[a.id] = a.faction;
   }
   const lab = room.map === "lab";
-  broadcast(room, {
+  room.seats = room.players.map((p) => ({ id: p.id, name: p.name, faction: p.faction }));
+  room.log = [];
+  room.startMsg = {
     type: "start",
     options: {
       seed: (Math.random() * 0x7fffffff) | 0,
@@ -265,20 +313,39 @@ function startGame(room: Room) {
     names,
     host: room.host,
     ai: room.ai.map((a) => ({ id: a.id, difficulty: a.difficulty })),
-  });
-  room.t0 = performance.now();
+  };
+  broadcast(room, room.startMsg);
   room.tick = 0;
-  // Drift-free clock: emit as many turns as wall time says we owe.
+  runClock(room);
+  console.log(`[${room.code}] started on ${room.map} with ${ids.map((id) => names[id]).join(", ")}`);
+}
+
+/** Drift-free clock: emits as many turns as wall time says we owe, from the current tick on. */
+function runClock(room: Room) {
+  room.t0 = performance.now() - room.tick * TICK_MS;
   room.timer = setInterval(() => {
     const due = Math.floor((performance.now() - room.t0) / TICK_MS);
     while (room.tick < due) {
       room.tick++;
       const cmds = room.pending;
       room.pending = [];
+      if (cmds.length) room.log.push({ tick: room.tick, cmds });
       broadcast(room, { type: "turn", tick: room.tick, cmds });
     }
   }, 4);
-  console.log(`[${room.code}] started on ${room.map} with ${ids.map((id) => names[id]).join(", ")}`);
+}
+
+function closeRoom(room: Room) {
+  if (room.timer) clearInterval(room.timer);
+  if (room.closeTimer) clearTimeout(room.closeTimer);
+  rooms.delete(room.code);
+  console.log(`[${room.code}] closed`);
+}
+
+/** The computer players are run by the host's browser; tell a new host to take them over. */
+function handOverAi(room: Room) {
+  const host = room.players.find((p) => p.id === room.host);
+  if (host && room.ai.length) send(host, { type: "host", ai: room.ai.map((a) => ({ id: a.id, difficulty: a.difficulty })) });
 }
 
 function leave(c: Client) {
@@ -287,16 +354,51 @@ function leave(c: Client) {
   room.players = room.players.filter((p) => p !== c);
   c.room = null;
   if (room.players.length === 0) {
+    if (!room.started) return closeRoom(room);
+    // Nobody left in a running game: pause it and wait a while for someone to come back.
     if (room.timer) clearInterval(room.timer);
-    rooms.delete(room.code);
-    console.log(`[${room.code}] closed`);
+    room.timer = null;
+    room.activeIds = [];
+    room.closeTimer = setTimeout(() => closeRoom(room), EMPTY_ROOM_GRACE_MS);
+    console.log(`[${room.code}] everyone left; paused at tick ${room.tick}, waiting for a rejoin`);
     return;
   }
-  if (room.host === c.id) room.host = room.players[0].id;
+  const wasHost = room.host === c.id;
+  if (wasHost) room.host = room.players[0].id;
   if (room.started) {
     room.activeIds = room.activeIds.filter((id) => id !== c.id);
     broadcast(room, { type: "left", id: c.id, name: c.name });
+    if (wasHost) handOverAi(room);
   } else lobbyState(room);
+}
+
+/**
+ * Joining a game that already started: a player who dropped out (same name, or
+ * the only free seat) gets their seat back and is fast-forwarded through every
+ * turn so far. Anyone else is turned away.
+ */
+function rejoin(c: Client, room: Room, rejoinFrom?: number) {
+  const free = room.seats.filter((s) => !room.players.some((p) => p.id === s.id));
+  const seat = free.find((s) => s.name.toLowerCase() === c.name.toLowerCase()) ?? (free.length === 1 ? free[0] : undefined);
+  if (!seat || !room.startMsg) return send(c, { type: "error", msg: "That game has already started." });
+  c.id = seat.id;
+  c.name = seat.name;
+  c.faction = seat.faction;
+  c.room = room;
+  room.players.push(c);
+  if (!room.activeIds.includes(c.id)) room.activeIds.push(c.id);
+  if (room.closeTimer) clearTimeout(room.closeTimer);
+  room.closeTimer = null;
+  // Nobody running the computer players any more (host gone): this player takes over.
+  const hostHere = room.players.some((p) => p.id === room.host && p !== c);
+  if (!hostHere) room.host = c.id;
+  if (rejoinFrom === undefined) send(c, { ...room.startMsg, host: room.host, you: c.id });
+  else if (room.host === c.id) handOverAi(room);
+  const from = rejoinFrom ?? 0;
+  send(c, { type: "catchup", from, upTo: room.tick, turns: room.log.filter((t) => t.tick > from) });
+  for (const p of room.players) if (p !== c) send(p, { type: "rejoined", id: c.id, name: c.name });
+  if (!room.timer) runClock(room);
+  console.log(`[${room.code}] ${c.name} rejoined at tick ${room.tick}`);
 }
 
 function onHash(room: Room, c: Client, tick: number, h: number) {
@@ -336,6 +438,10 @@ wss.on("connection", (ws) => {
       case "hello":
         if (c.room) return;
         c.name = cleanName(msg.name);
+        if (Number.isInteger(msg.rejoinFrom) && rooms.get(cleanRoom(msg.room))?.started) {
+          rejoin(c, rooms.get(cleanRoom(msg.room))!, Math.max(0, msg.rejoinFrom!));
+          break;
+        }
         join_(c, cleanRoom(msg.room));
         break;
       case "setup":

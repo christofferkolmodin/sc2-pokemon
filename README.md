@@ -119,14 +119,16 @@ Flow fields shared per command target (a bucket-queue Dijkstra; when buildings c
 1. **Now:** run `npm start` on your PC. The server prints its Tailscale address (100.x.y.z). Friends open `http://<your-pc-name>:3000`. Imported maps are served by the host, so friends don't need SC2.
 2. **Later:** a small VPS or Fly.io with Tailscale inside the container, no public IP. Copy `assets-private/maps` along.
 
-### On a website (pokecraft.win)
-The site runs from this PC through a **Cloudflare Tunnel** (no port forwarding; config in `~/.cloudflared/config.yml`, tunnel `pokecraft`, `pokecraft.win` → `http://localhost:3000`).
+### On a website (pokecraft.party)
+The site runs from this PC through a **Cloudflare Tunnel** (no port forwarding; config in `~/.cloudflared/config.yml`, tunnel `pokecraft`, `pokecraft.party` and the older `pokecraft.win` → `http://localhost:3000`).
 
 1. Put the shared password on the first line of `.game-password` in the repo root (git-ignored), or set `GAME_PASSWORD`. Without one, the site is open to anyone.
 2. `npm start` (it prints "password required for visitors").
 3. `cloudflared tunnel run pokecraft` in a second terminal.
 
-Friends open `https://pokecraft.win`, enter the password once (a cookie keeps them logged in for 30 days) and play. Changing the password logs everyone out. Playing on this PC via `localhost:3000` skips the password.
+Friends open `https://pokecraft.party`, enter the password once (a cookie keeps them logged in for 30 days) and play. Changing the password logs everyone out. Playing on this PC via `localhost:3000` skips the password.
+
+To run it on an always-on server instead of this PC, see [docs/hosting-hetzner.md](docs/hosting-hetzner.md) (updates: `tools/server/update.sh`).
 
 ## Legal reality check
 Blizzard and Nintendo IP, and Nintendo enforces hard. Keeping it private among friends keeps the risk low, but it isn't "legal". Rules: private repo, no public URL, **imported maps and any ripped models stay in `assets-private/` (git-ignored) and are never committed**, no streaming or posting clips.

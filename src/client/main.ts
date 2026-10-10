@@ -1,7 +1,7 @@
 import type { Difficulty, LobbyPlayer, ServerMsg } from "../net/protocol.ts";
 import type { Replay } from "../sim/replay.ts";
 import { BUILTIN_MAPS, hasMap, makeMap, registerMap } from "../sim/map.ts";
-import { FACTION_NAMES } from "../sim/units.ts";
+import { FACTION_COUNT, FACTION_NAMES } from "../sim/units.ts";
 import { type MapIndexEntry, type MapJson, type RenderData, mapFromJson } from "../maps/load.ts";
 import { Game, type GameSetup } from "./game.ts";
 import { GltfModels } from "./render/gltf.ts";
@@ -33,10 +33,20 @@ function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+let errTimer = 0;
 function showError(msg: string) {
   err.textContent = msg;
-  if (msg) err.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  clearTimeout(errTimer);
+  if (msg) errTimer = window.setTimeout(() => (err.textContent = ""), 7000);
 }
+
+// Controls reference lives in a dialog.
+const controlsDialog = $<HTMLDialogElement>("#controls-dialog");
+$("#btn-controls").onclick = () => controlsDialog.showModal();
+controlsDialog.addEventListener("click", (e) => {
+  // Close on the X or a click on the backdrop.
+  if (e.target === controlsDialog || (e.target as HTMLElement).closest("[data-close]")) controlsDialog.close();
+});
 
 const trainerName = () => nameInput.value.trim() || "Trainer";
 
@@ -47,9 +57,25 @@ nameInput.addEventListener("change", () => store("sc2poke.name", nameInput.value
 
 // --------------------------------------------------------- step 2: faction
 
+/** What each faction plays like, its evolution line and its worker (lobby text only). */
+const FACTION_INFO: { name: string; color: string; style: string; line: string[]; worker: string }[] = [
+  { name: "Fire", color: "var(--fire)", style: "Fast and aggressive. Swarm early, then take to the skies with Charizard.", line: ["Charmander", "Charmeleon", "Charizard"], worker: "Growlithe" },
+  { name: "Water", color: "var(--water)", style: "Ranged and steady. Hold the line, then shell them with Hydro Pump.", line: ["Squirtle", "Wartortle", "Blastoise"], worker: "Psyduck" },
+  { name: "Grass", color: "var(--grass)", style: "Tough and patient. Outlast every fight and finish with Solar Beam.", line: ["Bulbasaur", "Ivysaur", "Venusaur"], worker: "Oddish" },
+  { name: "Lightning", color: "var(--electric)", style: "Quick and shocking. Hit and run, and every stage can hit air.", line: ["Pichu", "Pikachu", "Raichu"], worker: "Voltorb" },
+];
+
 let faction = Number(store("sc2poke.faction") || "0");
 function showFaction(sel: string, f: number) {
-  for (const b of document.querySelectorAll<HTMLButtonElement>(`${sel} button`)) b.classList.toggle("on", Number(b.dataset.f) === f);
+  for (const b of document.querySelectorAll<HTMLButtonElement>(`${sel} button`)) {
+    b.classList.toggle("on", Number(b.dataset.f) === f);
+    b.setAttribute("aria-checked", String(Number(b.dataset.f) === f));
+  }
+  if (sel !== "#factions") return;
+  const info = FACTION_INFO[f];
+  $("#faction-info").innerHTML = info
+    ? `<div class="ttl" style="--fc:${info.color}"><i></i>${info.name}</div><p>${info.style}</p><div class="lb-evo">${info.line.map((n) => `<span>${n}</span>`).join("<em>›</em>")}<span class="wk">Worker: ${info.worker}</span></div>`
+    : `<div class="ttl" style="--fc:var(--random)"><i></i>Random</div><p>A different faction every game. Good for keeping things fresh.</p>`;
 }
 showFaction("#factions", faction);
 $("#factions").addEventListener("click", (e) => {
@@ -59,7 +85,62 @@ $("#factions").addEventListener("click", (e) => {
   store("sc2poke.faction", String(faction));
   showFaction("#factions", faction);
 });
-const pickFaction = (f: number) => (f >= 0 ? f : Math.floor(Math.random() * 3));
+const pickFaction = (f: number) => (f >= 0 ? f : Math.floor(Math.random() * FACTION_COUNT));
+
+// ----------------------------------------------------------------- sound
+// Saved to the same keys as the in-game menu; picking one plays a preview.
+
+const STARTERS = ["charmander", "squirtle", "bulbasaur", "pichu"];
+/** A new key when anime voices became the default, so everyone starts on them once. */
+const CRY_KEY = "sc2poke.crySet";
+let soundFiles: Promise<string[]> | null = null;
+const listSounds = () =>
+  (soundFiles ??= fetch("/api/sounds")
+    .then((r) => (r.ok ? (r.json() as Promise<string[]>) : []))
+    .catch(() => []));
+let preview: HTMLAudioElement | null = null;
+/** `gain` roughly matches the in-game levelling: the raw cry files are far louder than voices. */
+function playPreview(file: string, gain = 1) {
+  preview?.pause();
+  preview = new window.Audio(`/assets/sounds/${file.split("/").map(encodeURIComponent).join("/")}`);
+  preview.volume = Math.min(1, (gain * Number(store("sc2poke.volume") || "50")) / 100);
+  void preview.play().catch(() => {});
+}
+
+async function showSound(previewWhat?: "cries" | "advisor") {
+  const cries = store(CRY_KEY) || "anime";
+  const advisor = store("sc2poke.advisor") || "professor";
+  for (const b of document.querySelectorAll<HTMLElement>("#lobby-cries button")) b.classList.toggle("on", b.dataset.v === cries);
+  for (const b of document.querySelectorAll<HTMLElement>("#lobby-advisor button")) b.classList.toggle("on", b.dataset.v === advisor);
+  const files = await listSounds();
+  const hasCries = files.some((f) => f.startsWith(`cries/${cries}/`));
+  const lines = files.filter((f) => f.startsWith(`advisor/${advisor}/minerals`));
+  const about: Record<string, [string, string]> = {
+    latest: ["Remastered cries from the recent games.", "npm run fetch-cries"],
+    legacy: ["The original Game Boy cries.", "npm run fetch-cries"],
+    anime: ["Pokémon say their names, like in the anime.", "npm run fetch-anime-cries"],
+  };
+  const [text, cmd] = about[cries] ?? about.latest;
+  $("#sound-help").textContent = [
+    hasCries ? text : `Cries not downloaded yet (${cmd}).`,
+    lines.length ? "" : "The advisor uses your browser's voice until lines are recorded (npm run gen-advisor).",
+  ].join(" ");
+  const starter = STARTERS[faction] ?? "pikachu";
+  if (previewWhat === "cries" && cries === "anime") {
+    const takes = files.filter((f) => f.startsWith(`cries/anime/${starter}/`));
+    if (takes.length) playPreview(takes[Math.floor(Math.random() * takes.length)], 0.5);
+  } else if (previewWhat === "cries" && hasCries) playPreview(`cries/${cries}/${starter}.ogg`, 0.2);
+  if (previewWhat === "advisor" && lines.length) playPreview(lines[0]);
+}
+void showSound();
+for (const [sel, key] of [["#lobby-cries", "cries"], ["#lobby-advisor", "advisor"]] as const) {
+  $(sel).addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
+    if (!b) return;
+    store(key === "cries" ? CRY_KEY : `sc2poke.${key}`, b.dataset.v!);
+    void showSound(key);
+  });
+}
 
 // ------------------------------------------------------------ step 3: mode
 
@@ -77,7 +158,9 @@ function showMode(m: Mode) {
 }
 $("#modes").addEventListener("click", (e) => {
   const b = (e.target as HTMLElement).closest("[data-mode]") as HTMLElement | null;
-  if (b) showMode(b.dataset.mode as Mode);
+  if (!b) return;
+  showMode(b.dataset.mode as Mode);
+  if (mode === "friends") void refreshRooms();
 });
 showMode(mode);
 
@@ -133,18 +216,18 @@ class MapPicker {
     const q = this.search.value.trim().toLowerCase();
     const shown = maps.filter((m) => !q || m.name.toLowerCase().includes(q) || m.key === this.selected);
     const item = (m: MapChoice) =>
-      `<button class="lb-mapitem${m.key === this.selected ? " on" : ""}" data-key="${m.key}" ${m.players < this.minPlayers ? "disabled title='Not enough start locations'" : ""}><span>${escapeHtml(m.name)}</span><small>${m.players} players</small></button>`;
+      `<button class="lb-mapitem${m.key === this.selected ? " on" : ""}" data-key="${m.key}" ${m.players < this.minPlayers ? "disabled title='Not enough start locations'" : ""}><span>${escapeHtml(m.name)}</span><small>${m.players}P</small></button>`;
     const builtin = shown.filter((m) => !m.imported);
     const imported = shown.filter((m) => m.imported);
     this.list.innerHTML =
       (builtin.length ? `<div class="lb-mapgroup">Built-in</div>${builtin.map(item).join("")}` : "") +
       (imported.length ? `<div class="lb-mapgroup">From StarCraft II</div>${imported.map(item).join("")}` : "") +
-      (shown.length ? "" : `<div class="lb-mapgroup">No maps match</div>`);
+      (shown.length ? "" : `<div class="lb-mapempty">No maps match “${escapeHtml(q)}”</div>`);
     this.list.querySelector(".on")?.scrollIntoView({ block: "nearest" });
     const m = maps.find((x) => x.key === this.selected);
     if (!m) return;
     const src = m.imported ? `/assets/maps/${encodeURIComponent(m.key)}.png` : builtinMapPicture(m.key);
-    this.preview.innerHTML = `<img src="${src}" alt=""><b>${escapeHtml(m.name)}</b><span>${m.players} players · ${m.w}×${m.h}<br>${m.imported ? "Real SC2 ladder map" : "Built into the game"}</span>`;
+    this.preview.innerHTML = `<img src="${src}" alt="Overview of ${escapeHtml(m.name)}"><b>${escapeHtml(m.name)}</b><span>${m.players} players · ${m.w}×${m.h}</span><span>${m.imported ? "StarCraft II ladder map" : "Built into the game"}</span>`;
   }
 }
 
@@ -222,11 +305,16 @@ async function startGame(setup: Omit<GameSetup, "root" | "render" | "minimap" | 
 
 // --------------------------------------------------------- vs computer
 
-const aiCount = $<HTMLSelectElement>("#ai-count");
-aiCount.value = store("sc2poke.aicount") || "1";
+let aiCount = Number(store("sc2poke.aicount") || "1");
 let difficulty = (store("sc2poke.diff") as Difficulty) || "medium";
+const DIFF_HELP: Record<Difficulty, string> = {
+  easy: "Slow builds and small attacks. Good for learning.",
+  medium: "Expands, evolves and attacks in waves.",
+  hard: "Fast economy, upgrades and big armies.",
+};
 function showDiff() {
   for (const b of document.querySelectorAll<HTMLElement>("#ai-diff button")) b.classList.toggle("on", b.dataset.d === difficulty);
+  $("#ai-diff-help").textContent = DIFF_HELP[difficulty];
 }
 showDiff();
 $("#ai-diff").addEventListener("click", (e) => {
@@ -241,22 +329,31 @@ $("#ai-diff").addEventListener("click", (e) => {
 function updateAiCount() {
   const map = maps.find((m) => m.key === soloPicker.selected) ?? maps[0];
   const max = Math.max(1, map.players - 1);
-  for (const o of aiCount.options) o.disabled = Number(o.value) > max;
-  if (Number(aiCount.value) > max) aiCount.value = String(max);
-  $("#ai-count-help").textContent =
-    map.players > 2 ? `${map.name} has ${map.players} start locations: up to ${max} opponents, everyone against everyone.` : `${map.name} is a 1v1 map.`;
+  const shown = Math.min(aiCount, max);
+  for (const b of document.querySelectorAll<HTMLButtonElement>("#ai-count button")) {
+    b.disabled = Number(b.dataset.n) > max;
+    b.title = b.disabled ? `${map.name} only has ${map.players} start locations` : "";
+    b.classList.toggle("on", Number(b.dataset.n) === shown);
+  }
+  $("#ai-count-help").textContent = max === 1 ? "This map is 1v1." : shown === 1 ? "A 1v1 duel." : `Free-for-all: everyone against everyone.`;
 }
-aiCount.onchange = () => store("sc2poke.aicount", aiCount.value);
+$("#ai-count").addEventListener("click", (e) => {
+  const b = (e.target as HTMLElement).closest("button") as HTMLButtonElement | null;
+  if (!b || b.disabled) return;
+  aiCount = Number(b.dataset.n);
+  store("sc2poke.aicount", String(aiCount));
+  updateAiCount();
+});
 
 $("#btn-ai").onclick = () => {
   store("sc2poke.name", nameInput.value.trim());
   const map = maps.find((m) => m.key === soloPicker.selected) ?? maps[0];
-  const count = Math.max(1, Math.min(map.players - 1, Number(aiCount.value)));
+  const count = Math.max(1, Math.min(map.players - 1, aiCount));
   const players = Array.from({ length: count + 1 }, (_, i) => i + 1);
   const factions: Record<number, number> = { 1: pickFaction(faction) };
   const names: Record<number, string> = { 1: trainerName() };
   for (const p of players.slice(1)) {
-    factions[p] = Math.floor(Math.random() * 3);
+    factions[p] = Math.floor(Math.random() * FACTION_COUNT);
     names[p] = `${FACTION_NAMES[factions[p]]} AI (${difficulty})`;
   }
   const seed = (Math.random() * 0x7fffffff) | 0;
@@ -310,7 +407,19 @@ drop.addEventListener("drop", (e) => {
 
 // ------------------------------------------------------------ multiplayer
 
-roomInput.value = params.get("room") ?? store("sc2poke.room");
+/** The server's room-name rule, so what you type is exactly the room you join. */
+const cleanRoom = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 16);
+roomInput.value = cleanRoom(params.get("room") ?? store("sc2poke.room"));
+roomInput.addEventListener("input", () => {
+  const at = roomInput.selectionStart ?? roomInput.value.length;
+  const before = roomInput.value;
+  const clean = cleanRoom(before);
+  if (clean === before) return;
+  roomInput.value = clean;
+  // Keep the caret where it was, minus the characters that were dropped.
+  const pos = cleanRoom(before.slice(0, at)).length;
+  roomInput.setSelectionRange(pos, pos);
+});
 let ws: WebSocket | null = null;
 let myId = 0;
 let roomPlayers: LobbyPlayer[] = [];
@@ -332,24 +441,33 @@ $("#room-players").addEventListener("click", (e) => {
   const b = (e.target as HTMLElement).closest("[data-kick]") as HTMLElement | null;
   if (b) setup({ removeAi: Number(b.dataset.kick) });
 });
+const linkInput = $<HTMLInputElement>("#room-link");
+linkInput.addEventListener("focus", () => linkInput.select());
 $("#btn-copy").onclick = async () => {
-  const link = $("#room-link").textContent ?? "";
+  const btn = $("#btn-copy");
+  const label = btn.querySelector("span")!;
   try {
-    await navigator.clipboard.writeText(link);
-    $("#btn-copy").textContent = "Copied!";
+    await navigator.clipboard.writeText(linkInput.value);
+    label.textContent = "Copied";
+    btn.classList.add("done");
   } catch {
-    $("#btn-copy").textContent = "Select and copy it";
+    linkInput.focus();
+    label.textContent = "Press Ctrl+C";
   }
-  setTimeout(() => ($("#btn-copy").textContent = "Copy"), 1800);
+  setTimeout(() => {
+    label.textContent = "Copy invite";
+    btn.classList.remove("done");
+  }, 1800);
 };
 
 function joinRoom() {
-  const room = roomInput.value.trim();
-  if (!room) {
-    showError("Type a room name first. Your friends type the same name to join you.");
-    roomInput.focus();
-    return;
+  roomInput.value = cleanRoom(roomInput.value);
+  // No name: make up a fresh room ("pika-482") so creating a room is one click.
+  if (!roomInput.value) {
+    const words = ["pika", "char", "squirt", "bulba", "volt", "psy", "oddish", "growl"];
+    roomInput.value = `${words[Math.floor(Math.random() * words.length)]}-${100 + Math.floor(Math.random() * 900)}`;
   }
+  const room = roomInput.value;
   showError("");
   store("sc2poke.name", nameInput.value.trim());
   store("sc2poke.room", room);
@@ -359,6 +477,7 @@ function joinRoom() {
   ws = sock;
   let started = false;
   $<HTMLButtonElement>("#btn-join").disabled = true;
+  $("#btn-join").textContent = "Joining…";
   sock.onopen = () => {
     sock.send(JSON.stringify({ type: "hello", name: trainerName(), room }));
     sock.send(JSON.stringify({ type: "setup", faction: pickFaction(faction) }));
@@ -366,9 +485,12 @@ function joinRoom() {
   sock.onerror = () => showError("Couldn't reach the game server. Is the host's server running?");
   sock.onclose = () => {
     $<HTMLButtonElement>("#btn-join").disabled = false;
+    $("#btn-join").textContent = "Join room";
     if (!started) {
       $("#room-view").hidden = true;
       $("#lobby-form").hidden = false;
+      $("#lobby-hero").hidden = false;
+      void refreshRooms();
     }
   };
   const onMsg = (ev: MessageEvent) => {
@@ -383,47 +505,90 @@ function joinRoom() {
       showRoom(m.room, m.host, m.map);
     } else if (m.type === "start") {
       started = true;
+      if (m.you !== undefined) myId = m.you; // rejoining a running game skips the lobby
       sock.removeEventListener("message", onMsg);
-      void startGame({ source: new NetSource(sock), options: m.options, me: myId, names: m.names, bots: m.host === myId ? m.ai : [] });
+      void startGame({ source: new NetSource(sock, { room, name: trainerName() }), options: m.options, me: myId, names: m.names, bots: m.host === myId ? m.ai : [] });
     }
   };
   sock.addEventListener("message", onMsg);
 }
 $("#btn-join").onclick = joinRoom;
+
+/** Rooms waiting in the lobby on this server, refreshed while the With friends tab is open. */
+async function refreshRooms() {
+  if (mode !== "friends" || lobby.hidden || !$("#room-view").hidden || document.hidden) return;
+  try {
+    const r = await fetch("/api/rooms", { cache: "no-store" });
+    if (!r.ok) return;
+    const list = (await r.json()) as { code: string; host: string; players: number; max: number; map: string; inProgress?: boolean; missing?: string[] }[];
+    $("#open-rooms").innerHTML = list.length
+      ? list
+          .map((o) => {
+            if (o.inProgress) {
+              const who = (o.missing ?? []).map(escapeHtml).join(", ");
+              return `<li class="live"><span class="nm"><b>${escapeHtml(o.code)}</b><small>Game in progress · waiting for ${who}</small></span><button class="lb-btn lb-rejoin" data-room="${escapeHtml(o.code)}">Rejoin</button></li>`;
+            }
+            const full = o.players >= o.max;
+            return `<li><span class="nm"><b>${escapeHtml(o.code)}</b><small>${escapeHtml(o.host)} · ${escapeHtml(o.map)}</small></span><span class="ct">${o.players}/${o.max}</span><button class="lb-btn" data-room="${escapeHtml(o.code)}" ${full ? "disabled" : ""}>${full ? "Full" : "Join"}</button></li>`;
+          })
+          .join("")
+      : `<li class="lb-roomempty">No open rooms right now. Join with a new name to create one.</li>`;
+  } catch {
+    /* offline: keep the last list */
+  }
+}
+$("#open-rooms").addEventListener("click", (e) => {
+  const b = (e.target as HTMLElement).closest("[data-room]") as HTMLButtonElement | null;
+  if (!b || b.disabled) return;
+  roomInput.value = b.dataset.room!;
+  joinRoom();
+});
+setInterval(() => void refreshRooms(), 3000);
 roomInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") joinRoom();
 });
 
+/** Same cache-busting version as this script (main.js?v=…), so the art matches the build. */
+const BUILD = new URL(import.meta.url).search;
+const FACTION_ART = ["img/charmander.png", "img/squirtle.png", "img/bulbasaur.png", "img/pichu.png"].map((u) => u + BUILD);
+
 function showRoom(room: string, host: number, mapKey: string) {
   $("#lobby-form").hidden = true;
+  $("#lobby-hero").hidden = true;
   $("#room-view").hidden = false;
   $("#room-code").textContent = room;
   const isHost = host === myId;
   const hostName = roomPlayers.find((p) => p.id === host)?.name ?? "the host";
-  const link = `${location.origin}/?room=${encodeURIComponent(room)}`;
-  $("#room-link").textContent = link;
-  $("#room-players").innerHTML = roomPlayers
-    .map((p) => {
-      const tags = [p.id === host ? `<span class="tag">host</span>` : "", p.id === myId ? `<span class="tag">you</span>` : "", p.ai ? `<span class="tag ai">computer · ${p.ai}</span>` : ""].join("");
-      const kick = isHost && p.ai ? `<button data-kick="${p.id}" title="Remove this computer player">✕</button>` : "";
-      return `<li style="border-color:${teamColor(p.id)}"><span class="who">${escapeHtml(p.name)}</span>${tags}<span class="fac">${FACTION_NAMES[p.faction] ?? ""}</span>${kick}</li>`;
-    })
-    .join("");
+  linkInput.value = `${location.origin}/?room=${encodeURIComponent(room)}`;
+  const map = maps.find((m) => m.key === mapKey);
+  const slots = Math.min(8, map?.players ?? 2);
+  const free = slots - roomPlayers.length;
+  $("#room-count").textContent = `${roomPlayers.length}/${slots}`;
+  const rows = roomPlayers.map((p) => {
+    const tags = [p.id === host ? `<span class="tag host">Host</span>` : "", p.id === myId ? `<span class="tag you">You</span>` : ""].join("");
+    const kick = isHost && p.ai ? `<button class="lb-kick" data-kick="${p.id}" title="Remove this computer player" aria-label="Remove ${escapeHtml(p.name)}"><svg class="ic"><use href="#i-x"/></svg></button>` : "";
+    const sub = p.ai ? `${FACTION_NAMES[p.faction] ?? ""} · Computer, ${p.ai}` : FACTION_NAMES[p.faction] ?? "";
+    return `<li style="--pc:${teamColor(p.id)}"><span class="av"><img src="${FACTION_ART[p.faction] ?? ""}" alt=""></span><span class="who"><b>${escapeHtml(p.name)}</b><small>${sub}</small></span><span class="tags">${tags}</span>${kick}</li>`;
+  });
+  for (let i = 0; i < free; i++) rows.push(`<li class="open">Open slot${i === 0 ? " · share the invite link" : ""}</li>`);
+  $("#room-players").innerHTML = rows.join("");
   const me = roomPlayers.find((p) => p.id === myId);
   if (me) showFaction("#room-factions", me.faction);
   $("#room-host").hidden = !isHost;
+  $<HTMLButtonElement>("#btn-add-ai").disabled = free <= 0;
+  const full = $("#room-full");
+  full.hidden = !isHost || free > 0;
+  full.textContent = `${map?.name ?? "This map"} is full. Pick a map with more start locations to add computer players.`;
   $<HTMLButtonElement>("#btn-start").hidden = !isHost;
   roomPicker.readonly = !isHost;
   roomPicker.minPlayers = roomPlayers.length;
   roomPicker.select(mapKey);
-  $("#room-map-who").textContent = isHost ? "(you choose)" : `(chosen by ${hostName})`;
-  const map = maps.find((m) => m.key === mapKey);
-  const free = (map?.players ?? 2) - roomPlayers.length;
+  $("#room-map-who").textContent = isHost ? "You choose" : `Chosen by ${hostName}`;
   $("#room-hint").innerHTML = isHost
     ? roomPlayers.length === 1
-      ? "You're the host. Send the invite link to your friends, or add computer players. You can also start alone to look around."
-      : `You're the host. Press <b>Start game</b> when everyone is here${free > 0 ? ` (${free} more can join this map)` : ""}.`
-    : `Waiting for <b>${escapeHtml(hostName)}</b> to start the game. Pick your faction meanwhile.`;
+      ? "Send the invite link to your friends or add computer players. You can also start alone to look around."
+      : `Everyone's here? Press <b>Start game</b>.${free > 0 ? ` ${free} more can join on this map.` : ""}`
+    : `<span class="lb-waiting">Waiting for <b>${escapeHtml(hostName)}</b> to start the game</span>`;
 }
 
 $("#btn-start").onclick = () => ws?.send(JSON.stringify({ type: "start" }));

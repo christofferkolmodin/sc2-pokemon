@@ -14,7 +14,7 @@ export const TEAM_COLORS: Record<number, string> = {
 export const teamColor = (owner: number) => TEAM_COLORS[owner] ?? "#aaaaaa";
 
 /** Fire, Water, Grass: roofs of Gyms, evolution stones. */
-export const FACTION_COLORS = ["#ff7a2e", "#3a8dff", "#4cc25a"];
+export const FACTION_COLORS = ["#ff7a2e", "#3a8dff", "#4cc25a", "#ffd23c"];
 
 export const SELECT_OWN = "#3cff52";
 export const SELECT_ENEMY = "#ff3b30";

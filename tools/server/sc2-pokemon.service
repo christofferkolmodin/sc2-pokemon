@@ -1,0 +1,21 @@
+# systemd unit for the game server on the VPS (see docs/hosting-hetzner.md).
+# Install: sudo cp tools/server/sc2-pokemon.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now sc2-pokemon
+
+[Unit]
+Description=SC2 Pokemon game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=game
+WorkingDirectory=/home/game/sc2-pokemon
+# Only cloudflared (on this machine) talks to the server; port 3000 stays off the internet.
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

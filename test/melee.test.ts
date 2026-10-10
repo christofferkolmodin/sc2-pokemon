@@ -13,7 +13,7 @@ import {
   K_GEYSER,
   K_GYM,
   K_MART,
-  K_PIKACHU,
+  K_WORKER,
   K_SHRINE,
   K_SQUIRTLE,
   MODE_ATTACK,
@@ -43,11 +43,11 @@ test("starting bases: hall, 12 workers mining, 50 minerals, 12/15 supply", () =>
   const w = new World(melee);
   const p = w.players.get(1)!;
   assert.equal(ownIds(w, 1, K_CENTER).length, 1);
-  assert.equal(ownIds(w, 1, K_PIKACHU).length, 12);
+  assert.equal(ownIds(w, 1, K_WORKER).length, 12);
   assert.equal(p.m, 50);
   assert.equal(p.supply, 12);
   assert.equal(w.cap(1), 15);
-  for (const id of ownIds(w, 1, K_PIKACHU)) assert.equal(w.byId.get(id)!.orders[0]?.mode, MODE_GATHER);
+  for (const id of ownIds(w, 1, K_WORKER)) assert.equal(w.byId.get(id)!.orders[0]?.mode, MODE_GATHER);
 });
 
 test("12 workers mine at roughly SC2 rates (600-800 per minute)", () => {
@@ -61,11 +61,11 @@ test("worker builds a Poké Mart and a Gym, Gym trains the faction's unit", () =
   const w = new World({ ...melee, sandbox: false });
   w.players.get(1)!.m = 1000;
   const hall = w.byId.get(ownIds(w, 1, K_CENTER)[0])!;
-  const wk = ownIds(w, 1, K_PIKACHU)[0];
+  const wk = ownIds(w, 1, K_WORKER)[0];
   // Below the hall (main minerals are to the west).
   const htx = hall.tx;
   const hty = hall.ty;
-  steps(w, 1, (t) => (t === 1 ? [{ p: 1, c: { t: "build", ids: [wk], kind: K_MART, tx: htx + 1, ty: hty + 8, q: false } }, { p: 1, c: { t: "build", ids: [ownIds(w, 1, K_PIKACHU)[1]], kind: K_GYM, tx: htx + 7, ty: hty + 1, q: false } }] : []));
+  steps(w, 1, (t) => (t === 1 ? [{ p: 1, c: { t: "build", ids: [wk], kind: K_MART, tx: htx + 1, ty: hty + 8, q: false } }, { p: 1, c: { t: "build", ids: [ownIds(w, 1, K_WORKER)[1]], kind: K_GYM, tx: htx + 7, ty: hty + 1, q: false } }] : []));
   steps(w, 22 * 70);
   const mart = w.units.find((u) => u.kind === K_MART && u.owner === 1);
   const gym = w.units.find((u) => u.kind === K_GYM && u.owner === 1);
@@ -88,10 +88,25 @@ test("supply blocks training", () => {
   const w = new World(melee);
   w.players.get(1)!.m = 5000;
   const hall = ownIds(w, 1, K_CENTER)[0];
-  for (let i = 0; i < 5; i++) steps(w, 1, () => [{ p: 1, c: { t: "train", ids: [hall], kind: K_PIKACHU } }]);
-  // 12 + 3 = 15 = cap: the 4th and 5th fail with a supply error.
-  assert.equal(w.byId.get(hall)!.queue.length, 3);
-  assert.equal(w.players.get(1)!.supply, 15);
+  const pl = w.players.get(1)!;
+  for (let i = 0; i < 5; i++) steps(w, 1, () => [{ p: 1, c: { t: "train", ids: [hall], kind: K_WORKER } }]);
+  // All five queue, but only the one in training takes supply.
+  assert.equal(w.byId.get(hall)!.queue.length, 5);
+  assert.equal(pl.supply, 13);
+  // 12 + 3 = 15 = cap: the 4th waits at the front of the queue without progressing.
+  steps(w, 22 * 60 * 2);
+  const q = w.byId.get(hall)!.queue;
+  assert.equal(ownIds(w, 1, K_WORKER).length, 15);
+  assert.equal(q.length, 2);
+  assert.equal(q[0].t, 0);
+  assert.equal(pl.supply, 15);
+  // Cancelling a waiting unit refunds minerals but no supply; an empty queue checks supply up front.
+  const m = pl.m;
+  steps(w, 1, () => [{ p: 1, c: { t: "cancel", id: hall, slot: 1 } }, { p: 1, c: { t: "cancel", id: hall, slot: 0 } }]);
+  assert.ok(pl.m - m >= 100 && pl.m - m < 120, `refund ${pl.m - m}`); // plus any mining that tick
+  assert.equal(pl.supply, 15);
+  steps(w, 1, () => [{ p: 1, c: { t: "train", ids: [hall], kind: K_WORKER } }]);
+  assert.equal(w.byId.get(hall)!.queue.length, 0);
 });
 
 test("extractor on a geyser yields gas", () => {
@@ -99,7 +114,7 @@ test("extractor on a geyser yields gas", () => {
   w.players.get(1)!.m = 1000;
   const hall = w.byId.get(ownIds(w, 1, K_CENTER)[0])!;
   const g = w.units.filter((u) => u.kind === K_GEYSER).sort((a, b) => Math.hypot(a.x - hall.x, a.y - hall.y) - Math.hypot(b.x - hall.x, b.y - hall.y))[0];
-  const ws = ownIds(w, 1, K_PIKACHU);
+  const ws = ownIds(w, 1, K_WORKER);
   steps(w, 1, () => [{ p: 1, c: { t: "build", ids: [ws[0]], kind: K_EXTRACTOR, tx: g.tx, ty: g.ty, q: false } }]);
   steps(w, 22 * 30);
   const ex = w.units.find((u) => u.kind === K_EXTRACTOR && u.owner === 1)!;
@@ -209,7 +224,7 @@ test("cancelling refunds production and construction", () => {
   const p = w.players.get(1)!;
   p.m = 1000;
   const hall = ownIds(w, 1, K_CENTER)[0];
-  steps(w, 1, () => [{ p: 1, c: { t: "train", ids: [hall], kind: K_PIKACHU } }]);
+  steps(w, 1, () => [{ p: 1, c: { t: "train", ids: [hall], kind: K_WORKER } }]);
   assert.equal(p.m, 950);
   steps(w, 1, () => [{ p: 1, c: { t: "cancel", id: hall, slot: 0 } }]);
   assert.equal(p.m, 1000);

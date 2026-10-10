@@ -2,6 +2,7 @@ import { FP } from "../sim/fixed.ts";
 import { type Command, MODE_ATTACK, MODE_GATHER, MODE_MOVE } from "../sim/commands.ts";
 import {
   FACTION_UNITS,
+  FACTION_WORKERS,
   KINDS,
   K_CENTER,
   K_ELITE,
@@ -10,7 +11,6 @@ import {
   K_GYM,
   K_MART,
   K_MINERAL,
-  K_PIKACHU,
   K_SHRINE,
   K_TURRET,
   UP_ARMOR,
@@ -72,7 +72,8 @@ export class Bot {
     const done = (k: number) => mine.filter((u) => u.kind === k && w.isDone(u));
     const all = (k: number) => mine.filter((u) => u.kind === k);
     const halls = all(K_CENTER);
-    const workers = all(K_PIKACHU);
+    const workerKind = FACTION_WORKERS[me.faction];
+    const workers = all(workerKind);
     const army = mine.filter((u) => !KINDS[u.kind].structure && !KINDS[u.kind].worker);
     const gyms = all(K_GYM);
     const pending = (k: number) => (this.pendingBuild.has(k) && w.tick - this.pendingBuild.get(k)! < 22 * 25 ? 1 : 0);
@@ -101,7 +102,7 @@ export class Bot {
     // ---- economy
     const wantWorkers = Math.min(70, this.s.workers * Math.max(1, done(K_CENTER).length) + done(K_EXTRACTOR).length * 3);
     for (const h of done(K_CENTER)) {
-      if (workers.length < wantWorkers && h.queue.length < 1 && me.supply < w.cap(this.pid) && spend(50, 0, true)) out.push({ t: "train", ids: [h.id], kind: K_PIKACHU });
+      if (workers.length < wantWorkers && h.queue.length < 1 && me.supply < w.cap(this.pid) && spend(50, 0, true)) out.push({ t: "train", ids: [h.id], kind: workerKind });
     }
     this.assignWorkers(workers, out);
 

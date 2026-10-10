@@ -171,6 +171,7 @@ interface Beam {
   b: THREE.Vector3;
   width: number;
   color: number[];
+  /** Seconds alive; starts negative for a delayed beam. */
   t: number;
   life: number;
   jag: number; // lightning zig-zag amount
@@ -202,8 +203,8 @@ class Beams {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 25;
   }
-  add(a: THREE.Vector3, b: THREE.Vector3, width: number, color: number[], life: number, jag = 0) {
-    if (this.list.length < this.max) this.list.push({ a: a.clone(), b: b.clone(), width, color, t: 0, life, jag });
+  add(a: THREE.Vector3, b: THREE.Vector3, width: number, color: number[], life: number, jag = 0, delay = 0) {
+    if (this.list.length < this.max) this.list.push({ a: a.clone(), b: b.clone(), width, color, t: -delay, life, jag });
   }
   update(dt: number, eye: THREE.Vector3) {
     this.list = this.list.filter((bm) => (bm.t += dt) < bm.life);
@@ -214,6 +215,7 @@ class Beams {
     const p0 = new THREE.Vector3();
     const p1 = new THREE.Vector3();
     for (const bm of this.list) {
+      if (bm.t < 0) continue;
       const fade = 1 - bm.t / bm.life;
       const segs = bm.jag > 0 ? 6 : 1;
       let prev = bm.a.clone();
@@ -240,7 +242,135 @@ class Beams {
   }
 }
 
+
+const WHIP_FS = /* glsl */ `
+varying vec4 vColor;
+varying float vSide;
+void main() {
+  // Shaded like a round stem: lit centre, dark edges, a thin highlight.
+  float e = abs(vSide);
+  if (e > 0.98) discard;
+  float shade = sqrt(1.0 - e * e);
+  vec3 c = vColor.rgb * (0.35 + 0.75 * shade) + vec3(0.25, 0.35, 0.2) * smoothstep(0.85, 1.0, shade) * 0.5;
+  gl_FragColor = vec4(c, 1.0);
+}`;
+
+interface Whip {
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  /** Sideways direction the vine curls toward. */
+  curl: THREE.Vector3;
+  width: number;
+  color: number[];
+  t: number;
+  life: number;
+}
+
+/**
+ * Vine Whip: a solid, tapered vine that lashes out from the muzzle in a curve,
+ * snaps straight onto the target and pulls back. Normal blending, so it reads
+ * as a plant rather than a laser.
+ */
+class Whips {
+  private list: Whip[] = [];
+  private max = 128;
+  private segs = 14;
+  private pos: Float32Array;
+  private col: Float32Array;
+  private side: Float32Array;
+  geo = new THREE.BufferGeometry();
+  mesh: THREE.Mesh;
+  constructor() {
+    const v = this.max * this.segs * 4;
+    this.pos = new Float32Array(v * 3);
+    this.col = new Float32Array(v * 4);
+    this.side = new Float32Array(v);
+    this.geo.setAttribute("position", new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    this.geo.setAttribute("bcolor", new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
+    this.geo.setAttribute("side", new THREE.BufferAttribute(this.side, 1).setUsage(THREE.DynamicDrawUsage));
+    const idx = new Uint32Array(this.max * this.segs * 6);
+    for (let q = 0; q < this.max * this.segs; q++) idx.set([q * 4, q * 4 + 1, q * 4 + 2, q * 4 + 2, q * 4 + 1, q * 4 + 3], q * 6);
+    this.geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    this.mesh = new THREE.Mesh(this.geo, new THREE.ShaderMaterial({ vertexShader: BEAM_VS, fragmentShader: WHIP_FS, side: THREE.DoubleSide }));
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 24;
+  }
+  add(a: THREE.Vector3, b: THREE.Vector3, width: number, color: number[], life: number) {
+    if (this.list.length >= this.max) return;
+    const dir = new THREE.Vector3().subVectors(b, a);
+    const curl = new THREE.Vector3(-dir.z, 0, dir.x).normalize().multiplyScalar(Math.random() < 0.5 ? -1 : 1);
+    this.list.push({ a: a.clone(), b: b.clone(), curl, width, color, t: 0, life });
+  }
+  /** Point on the vine at u (0 = root, 1 = tip) for animation phase `ph`. */
+  private point(w: Whip, u: number, ph: number, out: THREE.Vector3) {
+    // Reach out (0-0.35), crack (0.35-0.5), pull back (0.5-1).
+    const reach = ph < 0.35 ? 1 - Math.pow(1 - ph / 0.35, 3) : ph < 0.5 ? 1 : 1 - (ph - 0.5) / 0.5;
+    const len = w.a.distanceTo(w.b);
+    // The curl is strongest while extending and relaxes into a straight snap.
+    const bend = (ph < 0.35 ? 1 - ph / 0.35 : 0) * 0.35 + 0.08;
+    const s = u * reach;
+    out.lerpVectors(w.a, w.b, s);
+    const arc = Math.sin(s * Math.PI);
+    out.addScaledVector(w.curl, arc * len * bend * Math.sin(u * Math.PI * 1.5 + ph * 6));
+    out.y += arc * len * (0.18 + bend * 0.4);
+  }
+  update(dt: number, eye: THREE.Vector3) {
+    this.list = this.list.filter((w) => (w.t += dt) < w.life);
+    let q = 0;
+    const p0 = new THREE.Vector3();
+    const p1 = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    const view = new THREE.Vector3();
+    const sideV = new THREE.Vector3();
+    for (const w of this.list) {
+      const ph = w.t / w.life;
+      this.point(w, 0, ph, p0);
+      for (let i = 1; i <= this.segs; i++) {
+        const u = i / this.segs;
+        this.point(w, u, ph, p1);
+        dir.subVectors(p1, p0);
+        view.subVectors(eye, p0);
+        const taper0 = w.width * (1 - ((i - 1) / this.segs) * 0.7);
+        const taper1 = w.width * (1 - u * 0.7);
+        sideV.crossVectors(dir, view).normalize();
+        const base = q * 4;
+        this.pos.set(
+          [
+            p0.x - sideV.x * taper0, p0.y - sideV.y * taper0, p0.z - sideV.z * taper0,
+            p0.x + sideV.x * taper0, p0.y + sideV.y * taper0, p0.z + sideV.z * taper0,
+            p1.x - sideV.x * taper1, p1.y - sideV.y * taper1, p1.z - sideV.z * taper1,
+            p1.x + sideV.x * taper1, p1.y + sideV.y * taper1, p1.z + sideV.z * taper1,
+          ],
+          base * 3,
+        );
+        // Slight colour banding along the stem.
+        const band = i % 3 === 0 ? 0.82 : 1;
+        for (let k = 0; k < 4; k++) {
+          this.col.set([w.color[0] * band, w.color[1] * band, w.color[2] * band, 1], (base + k) * 4);
+          this.side[base + k] = k % 2 === 0 ? -1 : 1;
+        }
+        q++;
+        p0.copy(p1);
+      }
+    }
+    this.geo.setDrawRange(0, q * 6);
+    for (const a of ["position", "bcolor", "side"]) (this.geo.getAttribute(a) as THREE.BufferAttribute).needsUpdate = true;
+  }
+}
+
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+
+/** A stream from a mouth or cannon to the target: Flamethrower, Water Gun, Hydro Pump, Bubble Beam. */
+interface Jet {
+  fx: WeaponFx;
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  t: number;
+  /** How long the stream keeps pouring. */
+  life: number;
+  /** Seconds for a particle to reach the target. */
+  travel: number;
+}
 
 const FIRE = [1.0, 0.62, 0.18, 1];
 const FIRE_END = [0.6, 0.1, 0.02];
@@ -252,10 +382,12 @@ export class Effects {
   readonly glow = new Pool(9000, true);
   readonly soft = new Pool(7000, false);
   readonly beams = new Beams();
+  readonly whips = new Whips();
   readonly group = new THREE.Group();
+  private jets: Jet[] = [];
 
   constructor() {
-    this.group.add(this.soft.points, this.glow.points, this.beams.mesh);
+    this.group.add(this.soft.points, this.glow.points, this.beams.mesh, this.whips.mesh);
   }
 
   setScale(px: number) {
@@ -267,6 +399,117 @@ export class Effects {
     this.glow.update(dt);
     this.soft.update(dt);
     this.beams.update(dt, eye);
+    this.whips.update(dt, eye);
+    this.jets = this.jets.filter((j) => (j.t += dt) < j.life);
+    for (const j of this.jets) this.pour(j, dt);
+  }
+
+  /** Start a stream from `a` to `b`; particles take `travel` seconds to arrive. */
+  jet(fx: WeaponFx, a: THREE.Vector3, b: THREE.Vector3, travel: number) {
+    if (this.jets.length > 200) return;
+    const life = fx === "flame" ? 0.42 : fx === "hydro" ? 0.38 : fx === "bubble" ? 0.3 : 0.16;
+    this.jets.push({ fx, a: a.clone(), b: b.clone(), t: 0, life, travel: Math.max(0.12, Math.min(0.6, travel)) });
+  }
+
+  private pour(j: Jet, dt: number) {
+    const dx = (j.b.x - j.a.x) / j.travel;
+    const dy = (j.b.y - j.a.y) / j.travel;
+    const dz = (j.b.z - j.a.z) / j.travel;
+    const speed = Math.hypot(dx, dy, dz);
+    // Each particle starts a random fraction of a frame along, so the stream is smooth instead of beaded.
+    const a = new THREE.Vector3();
+    const from = () => a.set(j.a.x, j.a.y, j.a.z).addScaledVector(new THREE.Vector3(dx, dy, dz), Math.random() * dt);
+    switch (j.fx) {
+      case "flame": {
+        // Fire that widens as it goes: small and yellow-white at the mouth, big and red at the far end.
+        const n = Math.round(dt * 260) || 1;
+        for (let i = 0; i < n; i++) {
+          const s = speed * 0.11;
+          from();
+          this.glow.emit(a.x, a.y, a.z, dx + rnd(-s, s), dy + rnd(-s, s) * 0.6 + 0.4, dz + rnd(-s, s), j.travel * rnd(0.9, 1.2), 0.14, rnd(0.7, 1.05), [1, 0.85, 0.45, 0.85], [0.9, 0.18, 0.02]);
+        }
+        this.glow.emit(j.a.x, j.a.y, j.a.z, 0, 0, 0, 0.05, 0.35, 0.35, [1, 0.9, 0.6, 0.8], [1, 0.6, 0.2]);
+        if (Math.random() < dt * 20) this.soft.emit(j.b.x, j.b.y, j.b.z, rnd(-0.3, 0.3), rnd(0.5, 1), rnd(-0.3, 0.3), rnd(0.6, 1), 0.3, 0.8, [0.3, 0.28, 0.26, 0.4], [0.5, 0.5, 0.5], -0.2, 0.8);
+        break;
+      }
+      case "water":
+      case "hydro": {
+        // A tight, bright core with spray peeling off it; Hydro Pump is thick and sprays at the target.
+        const big = j.fx === "hydro";
+        const n = Math.round(dt * (big ? 280 : 160)) || 1;
+        for (let i = 0; i < n; i++) {
+          const s = speed * (big ? 0.035 : 0.015);
+          from();
+          this.soft.emit(a.x, a.y, a.z, dx + rnd(-s, s), dy + rnd(-s, s), dz + rnd(-s, s), j.travel, big ? 0.3 : 0.14, big ? 0.5 : 0.2, [0.55, 0.8, 1, 0.95], [0.8, 0.92, 1]);
+          if (Math.random() < 0.3) this.glow.emit(a.x, a.y, a.z, dx, dy, dz, j.travel, big ? 0.16 : 0.07, big ? 0.24 : 0.1, [0.6, 0.85, 1, 0.5], [0.8, 0.95, 1]);
+        }
+        const spray = big ? 6 : 2;
+        for (let i = 0; i < spray; i++)
+          if (Math.random() < dt * 40) this.soft.emit(j.b.x, j.b.y, j.b.z, rnd(-1.5, 1.5), rnd(0.8, 2.4), rnd(-1.5, 1.5), rnd(0.3, 0.6), rnd(0.08, 0.18), 0.04, [0.6, 0.85, 1, 0.9], [0.9, 0.95, 1], 7);
+        break;
+      }
+      case "bubble": {
+        // A spray of wobbling bubbles that drift a little slower than the shot.
+        if (Math.random() < dt * 55) {
+          const s = speed * 0.1;
+          const slow = rnd(0.75, 1);
+          from();
+          const vx = dx * slow + rnd(-s, s);
+          const vy = dy * slow + rnd(-s, s) * 0.5 + 0.3;
+          const vz = dz * slow + rnd(-s, s);
+          const size = rnd(0.2, 0.36);
+          this.soft.emit(a.x, a.y, a.z, vx, vy, vz, j.travel / slow, size * 0.6, size, [0.7, 0.9, 1, 0.6], [0.88, 0.96, 1]);
+          // A white glint on each bubble.
+          this.glow.emit(a.x, a.y, a.z, vx, vy, vz, j.travel / slow, size * 0.25, size * 0.35, [1, 1, 1, 0.7], [0.85, 0.95, 1]);
+        }
+        break;
+      }
+    }
+  }
+
+  /** Wind-up at the attacker's mouth, from the start of the swing until the attack lands. */
+  charge(fx: WeaponFx, p: THREE.Vector3, secs: number) {
+    switch (fx) {
+      case "solar":
+        // Sunlight streams in from all around and gathers into a growing orb.
+        for (let i = 0; i < 26; i++) {
+          const u = Math.random() * 2 - 1;
+          const a = Math.random() * Math.PI * 2;
+          const r = Math.sqrt(1 - u * u);
+          const d = rnd(0.8, 1.4);
+          const ox = Math.cos(a) * r * d;
+          const oy = Math.abs(u) * d;
+          const oz = Math.sin(a) * r * d;
+          const life = secs * rnd(0.7, 1);
+          this.glow.emit(p.x + ox, p.y + oy, p.z + oz, -ox / life, -oy / life, -oz / life, life, 0.24, 0.1, [1, 1, 0.65, 0.9], [0.7, 1, 0.4]);
+        }
+        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, secs, 0.15, 1.3, [1, 1, 0.7, 0.9], [0.8, 1, 0.5]);
+        break;
+      case "spark":
+      case "bolt":
+      case "thunder":
+        // Cheeks crackle before the discharge.
+        this.burst(p, fx === "thunder" ? 14 : 6, [1, 1, 0.6, 1], [1, 0.85, 0.2], 1.4, 0.08, secs + 0.1);
+        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, secs + 0.05, 0.3, fx === "thunder" ? 1.1 : 0.55, [1, 0.95, 0.5, 0.8], [1, 0.9, 0.3]);
+        break;
+      case "ember":
+      case "flame":
+        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, Math.max(0.1, secs), 0.15, fx === "flame" ? 0.6 : 0.35, [1, 0.75, 0.3, 0.9], [1, 0.4, 0.1]);
+        this.smoke(p, 1, 0.25);
+        break;
+      case "hydro":
+      case "water":
+      case "bubble":
+        for (let i = 0; i < 5; i++) this.soft.emit(p.x, p.y, p.z, rnd(-0.4, 0.4), rnd(0.2, 0.8), rnd(-0.4, 0.4), 0.35, 0.07, 0.03, [0.6, 0.85, 1, 0.9], [0.85, 0.95, 1], 5);
+        break;
+      case "leaf":
+        // Leaves whirl up around the attacker.
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          this.soft.emit(p.x + Math.cos(a) * 0.3, p.y - 0.2, p.z + Math.sin(a) * 0.3, -Math.sin(a) * 1.4, rnd(0.6, 1.2), Math.cos(a) * 1.4, secs + 0.15, 0.1, 0.08, [0.45, 0.85, 0.35, 1], [0.3, 0.65, 0.25], 0, 1);
+        }
+        break;
+    }
   }
 
   // ------------------------------------------------------------ emitters
@@ -284,15 +527,16 @@ export class Effects {
     (additive ? this.glow : this.soft).emit(p.x, p.y, p.z, 0, 0, 0, 0.034, size, size, c, c);
   }
 
-  /** Trail behind a projectile, by move type. */
-  trail(fx: WeaponFx, p: THREE.Vector3, dt: number) {
+  /** Trail behind a projectile, by move type. `t` is the projectile's age (seconds). */
+  trail(fx: WeaponFx, p: THREE.Vector3, dt: number, t = 0) {
     switch (fx) {
       case "ember":
         this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.05, 0.35, 0.35, [1, 0.6, 0.2, 0.9], [1, 0.4, 0.1]);
         if (Math.random() < dt * 60) this.glow.emit(p.x, p.y, p.z, rnd(-0.3, 0.3), rnd(0, 0.4), rnd(-0.3, 0.3), 0.25, 0.22, 0.05, FIRE, FIRE_END);
         break;
       case "flame":
-        for (let i = 0; i < 3; i++) this.glow.emit(p.x + rnd(-0.1, 0.1), p.y + rnd(-0.1, 0.1), p.z + rnd(-0.1, 0.1), rnd(-0.5, 0.5), rnd(0, 0.6), rnd(-0.5, 0.5), rnd(0.25, 0.45), rnd(0.35, 0.6), 0.1, FIRE, FIRE_END);
+        // The head of the Flamethrower stream.
+        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.05, 0.6, 0.6, [1, 0.6, 0.2, 0.8], [1, 0.4, 0.1]);
         break;
       case "water":
         this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.05, 0.24, 0.24, [0.6, 0.85, 1, 0.8], [0.6, 0.85, 1]);
@@ -307,8 +551,13 @@ export class Effects {
         this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.05, 0.6, 0.6, [0.4, 0.7, 1, 0.6], [0.4, 0.7, 1]);
         break;
       case "leaf":
-        this.soft.emit(p.x, p.y, p.z, 0, 0, 0, 0.05, 0.22, 0.22, LEAF, LEAF);
-        if (Math.random() < dt * 30) this.soft.emit(p.x, p.y, p.z, rnd(-0.4, 0.4), rnd(-0.1, 0.3), rnd(-0.4, 0.4), 0.4, 0.1, 0.06, [0.5, 0.9, 0.4, 1], [0.3, 0.6, 0.2], 1.5);
+        // Three spinning leaves whirling around each other, shedding bits of green.
+        for (let k = 0; k < 3; k++) {
+          const a = t * 22 + (k * Math.PI * 2) / 3;
+          const flat = 0.6 + 0.4 * Math.abs(Math.sin(t * 30 + k));
+          this.soft.emit(p.x + Math.cos(a) * 0.28, p.y + Math.sin(a) * 0.16, p.z + Math.sin(a) * 0.28, 0, 0, 0, 0.04, 0.3 * flat, 0.3 * flat, k === 1 ? [0.55, 0.9, 0.4, 1] : LEAF, LEAF);
+        }
+        if (Math.random() < dt * 30) this.soft.emit(p.x, p.y, p.z, rnd(-0.4, 0.4), rnd(-0.1, 0.3), rnd(-0.4, 0.4), 0.4, 0.08, 0.05, [0.5, 0.9, 0.4, 1], [0.3, 0.6, 0.2], 1.5);
         break;
       case "bolt":
         this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.05, 0.45, 0.45, [1, 1, 0.6, 1], SPARK);
@@ -325,10 +574,17 @@ export class Effects {
     switch (fx) {
       case "ember":
       case "flame":
-      case "bite":
-        this.burst(p, fx === "bite" ? 6 : Math.round(10 * s), FIRE, FIRE_END, 1.4 * Math.sqrt(s), 0.32, fx === "bite" ? 0.25 : 0.35);
+      case "fang":
+        this.burst(p, fx === "fang" ? 8 : Math.round(10 * s), FIRE, FIRE_END, 1.4 * Math.sqrt(s), 0.32, 0.35);
         this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.18, 0.9 * s, 1.4 * s, [1, 0.6, 0.25, 0.7], [1, 0.3, 0.1]);
         if (fx === "flame") this.smoke(p, 3, 0.6);
+        break;
+      case "bite":
+      case "scratch":
+        this.burst(p, 5, [1, 1, 1, 0.9], [0.8, 0.8, 0.8], 1.2, 0.12, 0.2);
+        break;
+      case "absorb":
+        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.25, 0.3, 0.7, [0.55, 1, 0.45, 0.6], [0.3, 0.8, 0.3]);
         break;
       case "water":
       case "bubble":
@@ -343,12 +599,28 @@ export class Effects {
         break;
       }
       case "leaf":
-      case "vine":
         for (let i = 0; i < 8; i++) this.soft.emit(p.x, p.y, p.z, rnd(-1.2, 1.2), rnd(0.2, 1.4), rnd(-1.2, 1.2), rnd(0.4, 0.7), rnd(0.08, 0.14), 0.05, [0.45, 0.85, 0.35, 1], [0.25, 0.55, 0.2], 2.5, 1.5);
         break;
       case "solar":
-        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.3, 1.0 * s, 2.2 * s, [1, 1, 0.7, 0.9], [0.6, 1, 0.4]);
-        this.burst(p, 14, [1, 1, 0.6, 1], [0.5, 1, 0.3], 2.2, 0.25, 0.45);
+        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.35, 1.0 * s, 2.6 * s, [1, 1, 0.75, 0.95], [0.6, 1, 0.4]);
+        this.burst(p, 22, [1, 1, 0.6, 1], [0.5, 1, 0.3], 2.8, 0.25, 0.5);
+        this.smoke(p, 2, 0.6);
+        break;
+      case "thunder": {
+        this.burst(p, Math.round(14 * s), [0.7, 0.97, 1, 1], [0.3, 0.7, 1], 3.2, 0.14, 0.3);
+        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.2, 0.8 * s, 2.0 * s, [0.75, 0.97, 1, 0.9], [0.3, 0.7, 1]);
+        // A ring of sparks racing out along the ground.
+        for (let i = 0; i < 18; i++) {
+          const a = (i / 18) * Math.PI * 2;
+          this.glow.emit(p.x, p.y - 0.3, p.z, Math.cos(a) * 3.5, 0.2, Math.sin(a) * 3.5, 0.22, 0.16, 0.04, [0.8, 0.97, 1, 1], [0.4, 0.75, 1], 0, 6);
+        }
+        this.smoke(p, 3, 0.5);
+        break;
+      }
+      case "vine":
+        // The crack: a few torn leaves and a small white snap.
+        for (let i = 0; i < 6; i++) this.soft.emit(p.x, p.y, p.z, rnd(-1.4, 1.4), rnd(0.4, 1.6), rnd(-1.4, 1.4), rnd(0.5, 0.8), rnd(0.08, 0.13), 0.05, [0.45, 0.85, 0.35, 1], [0.25, 0.55, 0.2], 2.5, 1.5);
+        this.glow.emit(p.x, p.y, p.z, 0, 0, 0, 0.08, 0.25, 0.55, [1, 1, 0.9, 0.7], [0.8, 1, 0.7]);
         break;
       case "spark":
       case "bolt":
@@ -373,13 +645,92 @@ export class Effects {
       this.soft.emit(p.x + rnd(-0.3, 0.3), p.y, p.z + rnd(-0.3, 0.3), rnd(-0.2, 0.2), rnd(0.3, 0.8), rnd(-0.2, 0.2), rnd(0.8, 1.6), size * 0.6, size * 1.8, [0.35, 0.33, 0.3, 0.55], [0.5, 0.5, 0.5], -0.1, 0.8);
   }
 
-  /** Muzzle beam for instant moves (Solar Beam, Vine Whip, Thunderbolt…). */
-  beam(fx: WeaponFx, a: THREE.Vector3, b: THREE.Vector3) {
-    if (fx === "solar") {
-      this.beams.add(a, b, 0.32, [0.9, 1, 0.5, 1], 0.35);
-      this.beams.add(a, b, 0.12, [1, 1, 1, 1], 0.3);
-    } else if (fx === "vine") this.beams.add(a, b, 0.06, [0.35, 0.8, 0.3, 1], 0.18);
-    else if (fx === "spark" || fx === "bolt") this.beams.add(a, b, 0.07, [1, 0.95, 0.5, 1], 0.12, 0.35);
+  /** Lightning from a to b with a few forks splitting off it. */
+  private lightning(a: THREE.Vector3, b: THREE.Vector3, width: number, color: number[], life: number, jag: number, forks: number, delay = 0) {
+    this.beams.add(a, b, width, color, life, jag, delay);
+    this.beams.add(a, b, width * 0.35, [1, 1, 1, 1], life * 0.8, jag * 0.8, delay);
+    const len = a.distanceTo(b);
+    for (let i = 0; i < forks; i++) {
+      const m = new THREE.Vector3().lerpVectors(a, b, rnd(0.25, 0.7));
+      const end = m.clone().add(new THREE.Vector3(rnd(-1, 1), rnd(-0.6, 0.6), rnd(-1, 1)).multiplyScalar(len * 0.3 + 0.3));
+      this.beams.add(m, end, width * 0.45, color, life * 0.7, jag * 0.6, delay);
+    }
+  }
+
+  /** Effects for instant moves (Solar Beam, Vine Whip, Thunderbolt, bites and claws…), muzzle a to target b. */
+  beam(fx: WeaponFx, a: THREE.Vector3, target: THREE.Vector3) {
+    // Bites and claws land on the side facing the attacker, not inside the target.
+    const melee = fx === "fang" || fx === "bite" || fx === "scratch";
+    const b = melee ? target.clone().add(new THREE.Vector3(a.x - target.x, 0, a.z - target.z).normalize().multiplyScalar(0.4)) : target;
+    switch (fx) {
+      case "solar":
+        // A wide sunlit beam with a white-hot core, flickering particles along it.
+        this.beams.add(a, b, 0.55, [0.6, 1, 0.35, 0.5], 0.5);
+        this.beams.add(a, b, 0.3, [0.95, 1, 0.55, 1], 0.45);
+        this.beams.add(a, b, 0.11, [1, 1, 1, 1], 0.4);
+        for (let i = 0; i < 16; i++) {
+          const m = new THREE.Vector3().lerpVectors(a, b, Math.random());
+          this.glow.emit(m.x, m.y, m.z, rnd(-0.6, 0.6), rnd(-0.6, 0.6), rnd(-0.6, 0.6), rnd(0.3, 0.5), 0.12, 0.02, [1, 1, 0.7, 1], [0.6, 1, 0.4]);
+        }
+        break;
+      case "vine":
+        this.whips.add(a, b, 0.055, [0.28, 0.62, 0.22, 1], 0.42);
+        if (Math.random() < 0.6) this.whips.add(a, b, 0.04, [0.33, 0.7, 0.26, 1], 0.36);
+        break;
+      case "spark":
+        this.lightning(a, b, 0.06, [1, 0.95, 0.5, 1], 0.14, 0.3, 1);
+        break;
+      case "bolt":
+        // Thunderbolt: a thick forked bolt that flickers twice.
+        this.lightning(a, b, 0.11, [1, 0.93, 0.4, 1], 0.18, 0.45, 3);
+        this.lightning(a, b, 0.08, [1, 0.95, 0.55, 1], 0.12, 0.45, 1, 0.09);
+        break;
+      case "thunder": {
+        // A bolt from the sky onto the target, a second strike right after, and an arc from the attacker.
+        const sky = new THREE.Vector3(b.x + rnd(-0.6, 0.6), b.y + 9, b.z + rnd(-0.6, 0.6));
+        this.lightning(sky, b, 0.24, [0.55, 0.95, 1, 1], 0.24, 1.4, 4);
+        this.lightning(new THREE.Vector3(sky.x + rnd(-0.8, 0.8), sky.y, sky.z + rnd(-0.8, 0.8)), b, 0.16, [0.65, 0.95, 1, 1], 0.18, 1.2, 2, 0.12);
+        this.lightning(a, b, 0.08, [0.6, 0.95, 1, 1], 0.14, 0.5, 1);
+        break;
+      }
+      case "fang":
+      case "bite": {
+        // Upper and lower fangs snapping shut on the target.
+        const dir = new THREE.Vector3(b.x - a.x, 0, b.z - a.z).normalize();
+        const side = new THREE.Vector3(-dir.z, 0, dir.x);
+        const up = fx === "fang" ? 0.45 : 0.35;
+        // Two curved fangs per jaw, closing from above and below.
+        for (const k of [-1, 1])
+          for (const w of [-0.14, 0.14]) {
+            const from = new THREE.Vector3(b.x + side.x * w, b.y + up * k, b.z + side.z * w);
+            this.beams.add(from, new THREE.Vector3(b.x + side.x * w * 0.6, b.y + up * k * 0.12, b.z + side.z * w * 0.6), 0.07, [1, 1, 1, 1], 0.16);
+          }
+        if (fx === "fang") this.glow.emit(b.x, b.y, b.z, 0, 0, 0, 0.25, 0.5, 1.1, [1, 0.6, 0.2, 0.8], [1, 0.3, 0.05]);
+        break;
+      }
+      case "scratch": {
+        // Three claw marks raking across the target.
+        const dir = new THREE.Vector3(b.x - a.x, 0, b.z - a.z).normalize();
+        const side = new THREE.Vector3(-dir.z, 0, dir.x);
+        for (let i = -1; i <= 1; i++) {
+          const off = side.clone().multiplyScalar(i * 0.12);
+          const top = new THREE.Vector3(b.x + off.x - side.x * 0.2, b.y + 0.35, b.z + off.z - side.z * 0.2);
+          const bot = new THREE.Vector3(b.x + off.x + side.x * 0.2, b.y - 0.28, b.z + off.z + side.z * 0.2);
+          this.beams.add(top, bot, 0.05, [1, 0.95, 0.85, 1], 0.2);
+        }
+        break;
+      }
+      case "absorb":
+        // Green orbs of energy drift from the target back into Oddish.
+        for (let i = 0; i < 12; i++) {
+          const life = rnd(0.45, 0.65);
+          const ox = rnd(-0.2, 0.2);
+          const oy = rnd(-0.1, 0.3);
+          const oz = rnd(-0.2, 0.2);
+          this.glow.emit(b.x + ox, b.y + oy, b.z + oz, (a.x - b.x - ox) / life, (a.y - b.y - oy) / life + 0.4, (a.z - b.z - oz) / life, life, 0.22, 0.1, [0.6, 1, 0.45, 1], [0.3, 0.9, 0.35]);
+        }
+        break;
+    }
   }
 
   /** Pokémon fainting: red recall beam, white sparkles. */

@@ -366,8 +366,9 @@ function labDef(): MapDef {
   // Central pillar (symmetric on its own).
   rect(46, 34, 49, 37);
 
-  // Diagonal wall (staircase) to test smoothing along non-axis-aligned edges.
-  for (let i = 0; i < 12; i++) rect(58 + i, 40 + i, 59 + i, 41 + i);
+  // Diagonal wall (staircase) to test smoothing along non-axis-aligned edges. Placed so
+  // its mirror image stays clear of the other main's ramp (big units need 3 tiles to pass).
+  for (let i = 0; i < 12; i++) rect(58 + i, 20 + i, 59 + i, 21 + i);
 
   // Mirror (point symmetry around the map center).
   for (let y = 0; y < h; y++)

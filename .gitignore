@@ -4,3 +4,4 @@ assets-private/
 replays/
 *.log
 .game-password
+.venv-tts/
