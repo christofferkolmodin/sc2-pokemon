@@ -66,6 +66,8 @@ export interface Weapon {
   air: boolean;
   /** Splash radius in subunits (0 = single target). */
   splash: number;
+  /** Whether splash also hits air units around an air target (false: only the target itself). */
+  splashAir: boolean;
   /** Projectile speed in subunits per tick (0 = instant hit). */
   speed: number;
   /** Pokémon type of the move, for type effectiveness. */
@@ -143,6 +145,7 @@ interface WeaponSpec {
   ground?: boolean;
   air?: boolean;
   splash?: number; // milli-tiles
+  splashAir?: boolean; // default true
   speed?: number; // milli-tiles per second, 0 = instant
   type: number;
   fx: WeaponFx;
@@ -159,6 +162,7 @@ function weapon(s: WeaponSpec): Weapon {
     ground: s.ground ?? true,
     air: s.air ?? false,
     splash: milliTiles(s.splash ?? 0),
+    splashAir: s.splashAir ?? true,
     speed: s.speed ? speedPerTick(s.speed) : 0,
     type: s.type,
     fx: s.fx,
@@ -276,13 +280,14 @@ export const K_WORKER = K_WORKER_FIRE;
 // Fire.
 export const K_CHARMANDER = def({
   key: "charmander", name: "Charmander", ref: "Zergling", types: [TY_FIRE], faction: F_FIRE, stage: 1,
-  radius: 375, speed: 4130, hp: 55, sight: 8, supply: 1, m: 50, time: 17000, requires: K_GYM, height: 850,
-  weapon: weapon({ name: "Ember", range: 1000, damage: 6, cooldown: 700, point: 150, speed: 14000, type: TY_FIRE, fx: "ember" }),
+  radius: 375, speed: 4130, hp: 60, sight: 8, supply: 1, m: 50, time: 17000, requires: K_GYM, height: 850,
+  // One Charmander costs what two Zerglings do, so it hits harder and a little farther than one.
+  weapon: weapon({ name: "Ember", range: 1500, damage: 7, cooldown: 600, point: 150, speed: 14000, type: TY_FIRE, fx: "ember" }),
 });
 export const K_CHARMELEON = def({
   key: "charmeleon", name: "Charmeleon", ref: "Zergling (adrenal)", types: [TY_FIRE], faction: F_FIRE, stage: 2,
   radius: 500, speed: 4130, hp: 120, armor: 1, sight: 9, supply: 2, height: 1150,
-  weapon: weapon({ name: "Fire Fang", range: 150, damage: 12, cooldown: 600, type: TY_FIRE, fx: "fang" }),
+  weapon: weapon({ name: "Fire Fang", range: 150, damage: 12, cooldown: 750, type: TY_FIRE, fx: "fang" }),
 });
 export const K_CHARIZARD = def({
   key: "charizard", name: "Charizard", ref: "Mutalisk", types: [TY_FIRE, TY_FLYING], faction: F_FIRE, stage: 3,
@@ -310,25 +315,26 @@ export const K_BLASTOISE = def({
 // Grass.
 export const K_BULBASAUR = def({
   key: "bulbasaur", name: "Bulbasaur", ref: "Roach", types: [TY_GRASS, TY_POISON], faction: F_GRASS, stage: 1,
-  radius: 625, speed: 3150, hp: 120, armor: 1, sight: 9, supply: 2, m: 75, g: 25, time: 19000, requires: K_GYM, height: 950,
+  radius: 625, speed: 3150, hp: 135, armor: 1, sight: 9, supply: 2, m: 75, g: 25, time: 19000, requires: K_GYM, height: 950,
   weapon: weapon({ name: "Vine Whip", range: 4000, damage: 15, upgrade: 2, cooldown: 1430, point: 150, type: TY_GRASS, fx: "vine" }),
 });
 export const K_IVYSAUR = def({
   key: "ivysaur", name: "Ivysaur", ref: "Hydralisk", types: [TY_GRASS, TY_POISON], faction: F_GRASS, stage: 2,
-  radius: 750, speed: 3150, hp: 210, armor: 1, sight: 10, supply: 3, height: 1250,
-  weapon: weapon({ name: "Razor Leaf", range: 5500, damage: 11, cooldown: 900, air: true, speed: 15000, type: TY_GRASS, fx: "leaf" }),
+  radius: 750, speed: 3150, hp: 230, armor: 1, sight: 10, supply: 3, height: 1250,
+  weapon: weapon({ name: "Razor Leaf", range: 5500, damage: 12, cooldown: 900, air: true, speed: 15000, type: TY_GRASS, fx: "leaf" }),
 });
 export const K_VENUSAUR = def({
   key: "venusaur", name: "Venusaur", ref: "Thor", types: [TY_GRASS, TY_POISON], faction: F_GRASS, stage: 3,
   radius: 1250, speed: 2620, ticksToFull: 4, hp: 520, armor: 2, sight: 11, supply: 6, height: 1900,
-  weapon: weapon({ name: "Solar Beam", range: 7000, damage: 40, upgrade: 3, cooldown: 1800, point: 300, air: true, splash: 750, type: TY_GRASS, fx: "solar" }),
+  // Splash only on the ground: flyers stack tightly, so an air splash would cut through a whole flock of Charizard.
+  weapon: weapon({ name: "Solar Beam", range: 7000, damage: 40, upgrade: 3, cooldown: 1800, point: 300, air: true, splash: 750, splashAir: false, type: TY_GRASS, fx: "solar" }),
 });
 
 // Lightning: fast hit-and-run (Adept → Stalker → Archon), hits air and ground.
 export const K_PICHU = def({
   key: "pichu", name: "Pichu", ref: "Adept", types: [TY_ELECTRIC], faction: F_ELECTRIC, stage: 1,
-  radius: 375, speed: 4720, hp: 50, sight: 9, supply: 1, m: 50, g: 25, time: 18000, requires: K_GYM, height: 800,
-  weapon: weapon({ name: "Thunder Shock", range: 4000, damage: 7, cooldown: 1000, point: 120, air: true, type: TY_ELECTRIC, fx: "spark" }),
+  radius: 375, speed: 4720, hp: 60, sight: 9, supply: 1, m: 50, g: 25, time: 18000, requires: K_GYM, height: 800,
+  weapon: weapon({ name: "Thunder Shock", range: 4000, damage: 8, cooldown: 1000, point: 120, air: true, type: TY_ELECTRIC, fx: "spark" }),
 });
 export const K_PIKACHU = def({
   key: "pikachu", name: "Pikachu", ref: "Stalker", types: [TY_ELECTRIC], faction: F_ELECTRIC, stage: 2,

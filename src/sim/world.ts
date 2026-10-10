@@ -1546,7 +1546,7 @@ export class World {
       this.hurt(t, main, owner, src);
     }
     this.events.push({ e: "hit", x, y, air, kind: akind, src, target: t ? t.id : 0, dmg: main });
-    if (w.splash <= 0) return;
+    if (w.splash <= 0 || (air && !w.splashAir)) return;
     const r = w.splash;
     const cx0 = clamp(fdiv(x - r - FP * 3, CELL), 0, this.gw - 1);
     const cx1 = clamp(fdiv(x + r + FP * 3, CELL), 0, this.gw - 1);
