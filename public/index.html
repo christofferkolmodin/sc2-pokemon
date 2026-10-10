@@ -67,15 +67,15 @@
           </div>
           <div id="faction-info" class="lb-facinfo" aria-live="polite"></div>
 
-          <div class="lb-row2">
+          <div class="lb-row2 lb-stack">
             <div>
-              <span class="lb-label">Pokémon cries</span>
+              <span class="lb-label">Pokémon voices</span>
               <div id="lobby-cries" class="lb-seg">
-                <button data-v="latest">Modern</button><button data-v="legacy">Classic</button><button data-v="anime">Anime</button>
+                <button data-v="latest">Game sounds</button><button data-v="legacy">Game Boy</button><button data-v="anime">Say their name</button>
               </div>
             </div>
             <div>
-              <span class="lb-label">Advisor</span>
+              <span class="lb-label">Announcer</span>
               <div id="lobby-advisor" class="lb-seg">
                 <button data-v="professor">Professor</button><button data-v="trainer">Trainer</button>
               </div>
@@ -256,9 +256,9 @@
       <label class="opt">Graphics <select id="opt-quality"><option value="high">High</option><option value="low">Low (faster)</option></select></label>
       <label class="opt">Health bars <select id="opt-bars"><option value="damaged">Damaged &amp; selected</option><option value="always">Always</option></select></label>
       <label class="opt">Volume <input id="opt-volume" type="range" min="0" max="100" step="5"></label>
-      <label class="opt"><input id="opt-voice" type="checkbox"> Voices (advisor and Pokémon cries)</label>
-      <label class="opt">Advisor <select id="opt-advisor"><option value="professor">Professor (calm)</option><option value="trainer">Young trainer (excited)</option></select></label>
-      <label class="opt">Pokémon cries <select id="opt-cries"><option value="latest">Modern</option><option value="legacy">Classic</option><option value="anime">Anime</option></select></label>
+      <label class="opt"><input id="opt-voice" type="checkbox"> Voices (announcer and Pokémon)</label>
+      <label class="opt">Announcer <select id="opt-advisor"><option value="professor">Professor (calm)</option><option value="trainer">Trainer (excited)</option></select></label>
+      <label class="opt">Pokémon voices <select id="opt-cries"><option value="latest">Game sounds</option><option value="legacy">Game Boy</option><option value="anime">Say their name</option></select></label>
       <div class="row">
         <button data-ui id="btn-replay">Save replay</button>
         <button data-ui id="btn-surrender">Surrender</button>

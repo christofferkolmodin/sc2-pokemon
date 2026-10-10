@@ -116,14 +116,14 @@ async function showSound(previewWhat?: "cries" | "advisor") {
   const hasCries = files.some((f) => f.startsWith(`cries/${cries}/`));
   const lines = files.filter((f) => f.startsWith(`advisor/${advisor}/minerals`));
   const about: Record<string, [string, string]> = {
-    latest: ["Remastered cries from the recent games.", "npm run fetch-cries"],
-    legacy: ["The original Game Boy cries.", "npm run fetch-cries"],
+    latest: ["The Pokémon's sounds from the recent games.", "npm run fetch-cries"],
+    legacy: ["The original Game Boy sounds.", "npm run fetch-cries"],
     anime: ["Pokémon say their names, like in the anime.", "npm run fetch-anime-cries"],
   };
   const [text, cmd] = about[cries] ?? about.latest;
   $("#sound-help").textContent = [
-    hasCries ? text : `Cries not downloaded yet (${cmd}).`,
-    lines.length ? "" : "The advisor uses your browser's voice until lines are recorded (npm run gen-advisor).",
+    hasCries ? text : `Pokémon voices not downloaded yet (${cmd}).`,
+    lines.length ? "" : "The announcer uses your browser's voice until lines are recorded (npm run gen-advisor).",
   ].join(" ");
   const starter = STARTERS[faction] ?? "pikachu";
   if (previewWhat === "cries" && cries === "anime") {
