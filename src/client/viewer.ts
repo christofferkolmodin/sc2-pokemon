@@ -172,7 +172,11 @@ function stats(k: UnitKind): string {
   if (k.weapon) {
     const w = k.weapon;
     const range = w.range / FP;
+    // The sim starts the cooldown when an attack begins, so this is the time between attacks.
+    const every = w.cooldown / 22.4;
     rows.push(["Move", `${esc(w.name)} · ${w.damage} dmg`]);
+    rows.push(["Attacks", `every ${every.toFixed(2)} s`]);
+    rows.push(["DPS", `${(w.damage / every).toFixed(1)}${w.splash ? " · splash" : ""}`]);
     rows.push(["Range", range <= 0.2 ? "Melee" : `${+range.toFixed(1)}`]);
     rows.push(["Hits", w.ground && w.air ? "Ground & air" : w.air ? "Air" : "Ground"]);
   }
