@@ -45,7 +45,7 @@ echo "==> Restarting $SERVICE"
 systemctl restart "$SERVICE"
 # npm start builds again before listening, so give it a moment.
 for _ in $(seq 1 30); do
-  if curl -fsS -o /dev/null "http://127.0.0.1:3000/robots.txt"; then
+  if curl -fs -o /dev/null "http://127.0.0.1:3000/robots.txt"; then
     echo "    Up: $(as_app "git log -1 --format='%h %s'")"
     exit 0
   fi
