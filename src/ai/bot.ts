@@ -63,7 +63,7 @@ interface Settings {
 const SETTINGS: Record<Difficulty, Settings> = {
   // For brand-new players: slow, one base, evolves only very late, and small attacks that never grow.
   supereasy: { every: 66, workers: 10, gyms: 1, attackAt: 8, maxArmy: 12, expandAt: Infinity, upgrades: false, turrets: 0, shrineAt: 22 * 60 * 12, eliteAt: 22 * 60 * 20, evolves: 1, queue: 1, armyCap: 16 },
-  easy: { every: 33, workers: 16, gyms: 1, attackAt: 30, maxArmy: 120, expandAt: 22 * 60 * 6, upgrades: false, turrets: 0, shrineAt: 22 * 150, eliteAt: Infinity, evolves: 2, queue: 2, armyCap: 200 },
+  easy: { every: 33, workers: 16, gyms: 1, attackAt: 30, maxArmy: 120, expandAt: 22 * 60 * 6, upgrades: false, turrets: 0, shrineAt: 22 * 150, eliteAt: 22 * 60 * 13, evolves: 2, queue: 2, armyCap: 200 },
   medium: { every: 16, workers: 22, gyms: 2, attackAt: 24, maxArmy: 120, expandAt: 22 * 60 * 3, upgrades: true, turrets: 1, shrineAt: 22 * 150, eliteAt: 22 * 330, evolves: 2, queue: 2, armyCap: 200 },
   hard: { every: 8, workers: 22, gyms: 3, attackAt: 20, maxArmy: 120, expandAt: 22 * 60 * 2, upgrades: true, turrets: 2, shrineAt: 22 * 150, eliteAt: 22 * 330, evolves: 2, queue: 2, armyCap: 200 },
 };
