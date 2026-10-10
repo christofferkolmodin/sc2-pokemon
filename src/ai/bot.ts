@@ -27,7 +27,7 @@ import { type Unit, type World, G_MINE } from "../sim/world.ts";
  * It knows where enemy buildings are (no scouting), which keeps it simple.
  */
 
-export type Difficulty = "easy" | "medium" | "hard";
+export type Difficulty = "supereasy" | "easy" | "medium" | "hard";
 
 interface Base {
   x: number; // hall centre tile
@@ -38,14 +38,38 @@ interface Base {
   minerals: number;
 }
 
-const SETTINGS: Record<Difficulty, { every: number; workers: number; gyms: number; attackAt: number; expandAt: number; upgrades: boolean; turrets: number }> = {
-  easy: { every: 33, workers: 16, gyms: 1, attackAt: 30, expandAt: 22 * 60 * 6, upgrades: false, turrets: 0 },
-  medium: { every: 16, workers: 22, gyms: 2, attackAt: 24, expandAt: 22 * 60 * 3, upgrades: true, turrets: 1 },
-  hard: { every: 8, workers: 22, gyms: 3, attackAt: 20, expandAt: 22 * 60 * 2, upgrades: true, turrets: 2 },
+interface Settings {
+  /** Thinks every this many ticks. */
+  every: number;
+  workers: number;
+  gyms: number;
+  /** Army supply for the first attack; each later wave needs 10 more, up to maxArmy. */
+  attackAt: number;
+  maxArmy: number;
+  expandAt: number;
+  upgrades: boolean;
+  turrets: number;
+  /** Earliest ticks for the Shrine (first evolutions) and the Elite Hall (final evolutions). */
+  shrineAt: number;
+  eliteAt: number;
+  /** Most evolutions started per think. */
+  evolves: number;
+  /** Units queued per Gym. */
+  queue: number;
+  /** Total army supply it stops building (and evolving) at. */
+  armyCap: number;
+}
+
+const SETTINGS: Record<Difficulty, Settings> = {
+  // For brand-new players: slow, one base, evolves only very late, and small attacks that never grow.
+  supereasy: { every: 66, workers: 10, gyms: 1, attackAt: 8, maxArmy: 12, expandAt: Infinity, upgrades: false, turrets: 0, shrineAt: 22 * 60 * 12, eliteAt: 22 * 60 * 20, evolves: 1, queue: 1, armyCap: 16 },
+  easy: { every: 33, workers: 16, gyms: 1, attackAt: 30, maxArmy: 120, expandAt: 22 * 60 * 6, upgrades: false, turrets: 0, shrineAt: 22 * 150, eliteAt: Infinity, evolves: 2, queue: 2, armyCap: 200 },
+  medium: { every: 16, workers: 22, gyms: 2, attackAt: 24, maxArmy: 120, expandAt: 22 * 60 * 3, upgrades: true, turrets: 1, shrineAt: 22 * 150, eliteAt: 22 * 330, evolves: 2, queue: 2, armyCap: 200 },
+  hard: { every: 8, workers: 22, gyms: 3, attackAt: 20, maxArmy: 120, expandAt: 22 * 60 * 2, upgrades: true, turrets: 2, shrineAt: 22 * 150, eliteAt: 22 * 330, evolves: 2, queue: 2, armyCap: 200 },
 };
 
 export class Bot {
-  private s: (typeof SETTINGS)[Difficulty];
+  private s: Settings;
   private bases: Base[] | null = null;
   private wave = 0;
   private attacking = false;
@@ -114,19 +138,21 @@ export class Bot {
     }
 
     // ---- tech and production buildings
-    if (gyms.length === 0 && workers.length >= 14 && halls.length > 0 && !pending(K_GYM)) {
+    // Thresholds cap at the difficulty's own worker target, so a small economy still builds its first Gym and gas.
+    const enough = (n: number) => workers.length >= Math.min(n, this.s.workers);
+    if (gyms.length === 0 && enough(14) && halls.length > 0 && !pending(K_GYM)) {
       tryBuild(K_GYM);
     } else if (gyms.length < this.s.gyms * Math.max(1, Math.min(2, done(K_CENTER).length)) && workers.length >= 18 && !pending(K_GYM) && m >= 300) {
       tryBuild(K_GYM);
     }
     const extractors = all(K_EXTRACTOR).length;
-    if (extractors < Math.min(2 * done(K_CENTER).length, workers.length >= 16 ? (workers.length >= 22 ? 3 : 1) + (time > 22 * 300 ? 1 : 0) : 0) && !pending(K_EXTRACTOR)) {
+    if (extractors < Math.min(2 * done(K_CENTER).length, enough(16) ? (workers.length >= 22 ? 3 : 1) + (time > 22 * 300 ? 1 : 0) : 0) && !pending(K_EXTRACTOR)) {
       if (spend(75, 0) && !this.buildExtractor(workers, out)) m += 75;
     }
-    if (done(K_GYM).length > 0 && all(K_SHRINE).length === 0 && time > 22 * 150 && !pending(K_SHRINE) && m >= 150 && g >= 100) {
+    if (done(K_GYM).length > 0 && all(K_SHRINE).length === 0 && time > this.s.shrineAt && !pending(K_SHRINE) && m >= 150 && g >= 100) {
       tryBuild(K_SHRINE);
     }
-    if (done(K_SHRINE).length > 0 && all(K_ELITE).length === 0 && time > 22 * 330 && this.difficulty !== "easy" && !pending(K_ELITE) && m >= 150 && g >= 150) {
+    if (done(K_SHRINE).length > 0 && all(K_ELITE).length === 0 && time > this.s.eliteAt && !pending(K_ELITE) && m >= 150 && g >= 150) {
       tryBuild(K_ELITE);
     }
     if (done(K_GYM).length > 0 && all(K_TURRET).length < this.s.turrets && time > 22 * 240 && !pending(K_TURRET) && m >= 250) {
@@ -161,10 +187,17 @@ export class Bot {
     // ---- army production
     const unit = FACTION_UNITS[me.faction][0];
     const uk = KINDS[unit];
+    // Army supply including units in production and evolutions in progress.
+    let armySupply = army.reduce((s, u) => s + KINDS[u.morphTo >= 0 ? u.morphTo : u.kind].supply, 0);
+    for (const gym of all(K_GYM)) for (const q of gym.queue) if (q.kind >= 0) armySupply += KINDS[q.kind].supply;
     for (const gym of done(K_GYM)) {
-      if (gym.queue.length >= 2) continue;
+      if (gym.queue.length >= this.s.queue) continue;
+      if (armySupply + uk.supply > this.s.armyCap) break;
       if (me.supply + uk.supply > w.cap(this.pid)) break;
-      if (spend(uk.m, uk.g)) out.push({ t: "train", ids: [gym.id], kind: unit });
+      if (spend(uk.m, uk.g)) {
+        out.push({ t: "train", ids: [gym.id], kind: unit });
+        armySupply += uk.supply;
+      }
     }
     // Evolutions: keep roughly a third of the army at each stage once the tech is there.
     const evolvers = army.filter((u) => u.morphTo < 0 && KINDS[u.kind].evolve && !u.engaged && !u.target && u.lastHit < w.tick - 22 * 5);
@@ -175,9 +208,12 @@ export class Bot {
       const stage = KINDS[u.kind].stage;
       const higher = army.filter((a) => KINDS[a.kind].stage > stage).length;
       if (higher > army.length * (stage === 1 ? 0.5 : 0.3)) continue;
+      const grow = KINDS[e.to].supply - KINDS[u.kind].supply;
+      if (armySupply + grow > this.s.armyCap) continue;
       if (spend(e.m, e.g)) {
         out.push({ t: "evolve", ids: [u.id] });
-        if (++evolved >= 2) break;
+        armySupply += grow;
+        if (++evolved >= this.s.evolves) break;
       }
     }
 
@@ -396,7 +432,7 @@ export class Bot {
     }
 
     const need = this.s.attackAt + this.wave * 10;
-    if (!this.attacking && supply >= Math.min(need, 120)) {
+    if (!this.attacking && supply >= Math.min(need, this.s.maxArmy)) {
       this.attacking = true;
       this.wave++;
     }

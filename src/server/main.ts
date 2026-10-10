@@ -22,7 +22,7 @@ import { TICK_MS } from "../sim/fixed.ts";
 import { type PlayerCommand, sanitizeCommand } from "../sim/commands.ts";
 import { BUILTIN_MAPS } from "../sim/map.ts";
 import { FACTION_COUNT } from "../sim/units.ts";
-import { type ClientMsg, type Difficulty, type LobbyPlayer, MAX_PLAYERS, type ServerMsg } from "../net/protocol.ts";
+import { type ClientMsg, DIFFICULTIES, type Difficulty, type LobbyPlayer, MAX_PLAYERS, type ServerMsg } from "../net/protocol.ts";
 import { Gate, loadPassword } from "./auth.ts";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -272,7 +272,7 @@ function onSetup(c: Client, room: Room, m: Extract<ClientMsg, { type: "setup" }>
   const isHost = room.host === c.id;
   if (Number.isInteger(m.faction) && m.faction! >= 0 && m.faction! < FACTION_COUNT) c.faction = m.faction!;
   if (isHost && typeof m.map === "string" && mapList().some((x) => x.key === m.map)) room.map = m.map;
-  if (isHost && m.addAi && ["easy", "medium", "hard"].includes(m.addAi)) {
+  if (isHost && m.addAi && DIFFICULTIES.includes(m.addAi)) {
     if (room.players.length + room.ai.length < Math.min(MAX_PLAYERS, mapPlayers(room.map))) {
       const id = freeId(room);
       const faction = Math.floor(Math.random() * FACTION_COUNT);

@@ -141,7 +141,7 @@
 
 /* Segmented control */
 .lb-seg { display: flex; padding: 4px; gap: 4px; background: var(--l-bg); border: 1px solid var(--l-line); border-radius: var(--r-md); }
-#lobby .lb-seg button { flex: 1; padding: 8px 6px; border-radius: var(--r-sm); color: var(--l-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+#lobby .lb-seg button { flex: 1 1 auto; padding: 8px 6px; white-space: nowrap; border-radius: var(--r-sm); color: var(--l-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 #lobby .lb-seg button:hover:not(:disabled) { color: var(--l-text); background: var(--l-s1); }
 #lobby .lb-seg button.on { color: var(--l-text); background: var(--l-s3); box-shadow: 0 0 0 1px var(--l-line2) inset; }
 

@@ -1,4 +1,4 @@
-import type { Difficulty, LobbyPlayer, ServerMsg } from "../net/protocol.ts";
+import { DIFFICULTY_NAMES, type Difficulty, type LobbyPlayer, type ServerMsg } from "../net/protocol.ts";
 import type { Replay } from "../sim/replay.ts";
 import { BUILTIN_MAPS, hasMap, makeMap, registerMap } from "../sim/map.ts";
 import { FACTION_COUNT, FACTION_NAMES } from "../sim/units.ts";
@@ -307,7 +307,9 @@ async function startGame(setup: Omit<GameSetup, "root" | "render" | "minimap" | 
 
 let aiCount = Number(store("sc2poke.aicount") || "1");
 let difficulty = (store("sc2poke.diff") as Difficulty) || "medium";
+if (!(difficulty in DIFFICULTY_NAMES)) difficulty = "medium";
 const DIFF_HELP: Record<Difficulty, string> = {
+  supereasy: "Barely builds and only sends tiny attacks. For your very first games.",
   easy: "Slow builds and small attacks. Good for learning.",
   medium: "Expands, evolves and attacks in waves.",
   hard: "Fast economy, upgrades and big armies.",
@@ -354,7 +356,7 @@ $("#btn-ai").onclick = () => {
   const names: Record<number, string> = { 1: trainerName() };
   for (const p of players.slice(1)) {
     factions[p] = Math.floor(Math.random() * FACTION_COUNT);
-    names[p] = `${FACTION_NAMES[factions[p]]} AI (${difficulty})`;
+    names[p] = `${FACTION_NAMES[factions[p]]} AI (${DIFFICULTY_NAMES[difficulty].toLowerCase()})`;
   }
   const seed = (Math.random() * 0x7fffffff) | 0;
   void startGame({
@@ -567,7 +569,7 @@ function showRoom(room: string, host: number, mapKey: string) {
   const rows = roomPlayers.map((p) => {
     const tags = [p.id === host ? `<span class="tag host">Host</span>` : "", p.id === myId ? `<span class="tag you">You</span>` : ""].join("");
     const kick = isHost && p.ai ? `<button class="lb-kick" data-kick="${p.id}" title="Remove this computer player" aria-label="Remove ${escapeHtml(p.name)}"><svg class="ic"><use href="#i-x"/></svg></button>` : "";
-    const sub = p.ai ? `${FACTION_NAMES[p.faction] ?? ""} · Computer, ${p.ai}` : FACTION_NAMES[p.faction] ?? "";
+    const sub = p.ai ? `${FACTION_NAMES[p.faction] ?? ""} · Computer, ${DIFFICULTY_NAMES[p.ai]?.toLowerCase() ?? p.ai}` : FACTION_NAMES[p.faction] ?? "";
     return `<li style="--pc:${teamColor(p.id)}"><span class="av"><img src="${FACTION_ART[p.faction] ?? ""}" alt=""></span><span class="who"><b>${escapeHtml(p.name)}</b><small>${sub}</small></span><span class="tags">${tags}</span>${kick}</li>`;
   });
   for (let i = 0; i < free; i++) rows.push(`<li class="open">Open slot${i === 0 ? " · share the invite link" : ""}</li>`);

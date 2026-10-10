@@ -3,7 +3,9 @@ import type { WorldOptions } from "../sim/world.ts";
 
 /** Lockstep protocol. JSON over one WebSocket at /ws. */
 
-export type Difficulty = "easy" | "medium" | "hard";
+export type Difficulty = "supereasy" | "easy" | "medium" | "hard";
+export const DIFFICULTIES: Difficulty[] = ["supereasy", "easy", "medium", "hard"];
+export const DIFFICULTY_NAMES: Record<Difficulty, string> = { supereasy: "Super easy", easy: "Easy", medium: "Medium", hard: "Hard" };
 
 export type ClientMsg =
   /**
